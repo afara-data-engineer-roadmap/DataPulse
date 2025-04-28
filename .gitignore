@@ -1,0 +1,26 @@
+# Fichiers et dossiers Python spécifiques
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Dossiers d'environnements virtuels (si tu en utilises un jour)
+venv/
+venv*/
+env/
+env*/
+ENV/
+ENV*/
+.venv/
+.venv*/
+.env/
+.env*/
+
+# Fichiers IDE / Editeur (exemples, à adapter si besoin)
+.vscode/
+.idea/
+*.swp
+*~
+
+# Fichiers de configuration spécifiques à l'OS (optionnel)
+.DS_Store
+Thumbs.db
