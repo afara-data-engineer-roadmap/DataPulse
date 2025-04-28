@@ -3,18 +3,18 @@
 import pandas as pd
 from pathlib import Path 
 import logging
+import numpy as np
 
-#configuration du logging (simple pour commencer)
+# Configuration du logging (simple pour commencer)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Définir le chemin vers dossier du projet
+BASE_DIR = Path(__file__).resolve().parent.parent
 
 # Utilise Pathlib pour une meilleure gestion des chemins (multi-OS)
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-
 DATA_DIR = BASE_DIR / "data"  
-
-SLEEP_DATA_FILE = DATA_DIR / "Sommeil.csv"
+SLEEP_DATA_FILE = DATA_DIR / "Sommeil_Test.csv"
 
 def load_sleep_data(file_path) : 
     """Charge les données de sommeil depuis un csv"""
@@ -44,7 +44,7 @@ def parse_duration(duration_str) :
         if len (parts) == 2 :
             hours = int(parts[0]) 
             if parts[1]:
-                minutes = int(parts(1)) 
+                minutes = int(parts[1]) 
             elif 'h' not in duration_str : 
                 minutes = int(parts[0])
         total_minutes = hours * 60 + minutes
@@ -52,6 +52,19 @@ def parse_duration(duration_str) :
         return total_minutes
     except ValueError:
         logging.warning (f"impossible de parser la duréé : '{duration_str}'")
+        return None
+
+def parse_heure(heure_str) : 
+    """convertir une heure '3:56 AM' date_time """
+    if pd.isna(heure_str) or '--'  in heure_str : 
+        return None 
+    try : 
+        heure = pd.to_datetime(heure_str)
+       
+        
+        return heure
+    except ValueError:
+        logging.warning (f"impossible de parser la duréé : '{heure_str}'")
         return None
     
 
@@ -63,23 +76,43 @@ def process_sleep_data(df) :
         return None
     
     logging.info("Début du traitement de données...")
+    pd.options.mode.copy_on_write = True # Assure que la lors d'une écriture on fait une copie
     processed_df = df.copy()
     
     #---- Tache principale pour jour 1 -----
     #convertir la colonne durée en minutes totales 
     processed_df['Duree_minutes'] = processed_df['Durée'].apply(parse_duration)
+    
     logging.info("colonne 'Duree_minutes créée.")
-    logging.debug("Apercu après ajout Dure_minutes" , processed_df.head().to_string() )
+    logging.debug("Apercu après ajout Duree_minutes" , processed_df.head().to_string() )
     
     # --- Autres traitements (pour plus tard) ---
    # TODO: Convertir 'Sommeil 4 semaines' en datetime
+    processed_df["date"] = pd.to_datetime(df["Sommeil 4 semaines"])
    # TODO: Convertir 'Heure de coucher' et 'Heure de lever' en datetime/time
-   # TODO: Calculer la durée réelle entre coucher et lever
-   # TODO: Nettoyer les noms de colonnes
-   
-    logging.info("Traitement des données terminé.")
-    return processed_df
+    processed_df["coucher"] = processed_df['Heure de coucher'].apply(parse_heure)
+    processed_df["lever"] = processed_df['Heure de lever'].apply(parse_heure)
 
+   # TODO: Calculer la durée réelle entre coucher et lever
+    processed_df["nombre_heures"] = processed_df["lever"] - processed_df["coucher"]
+    comps = processed_df['nombre_heures'].dt.components # split de l'heure en heures et minutes 
+    condition =  processed_df['nombre_heures'] >= pd.Timedelta(0)  # permet de comparer heures en mode timedelta 
+    processed_df['heures']   = np.where(
+        condition,  
+        comps.days * 24 + comps.hours,# total d'heures
+        comps.days * 24 + comps.hours + 24  # dans le cas ou decalage du à am pm 
+        )# dans le cas ou decalage du à am pm 
+       
+    
+    processed_df['minutes'] = comps.minutes       
+   # TODO: Nettoyer les noms de colonnes
+    processed_df["coucher"]=processed_df["Heure de coucher"] 
+    processed_df["lever"]=processed_df["Heure de lever"]
+    df =  processed_df[["date","coucher","lever","heures","minutes","Duree_minutes"]]
+
+    logging.info("Traitement des données terminé.")
+    return df
+    
 def generate_report (df) : 
     
     avg_duration = df['Duree_minutes'].mean()
@@ -101,5 +134,6 @@ if __name__ == "__main__" :
     sleep_df = load_sleep_data(SLEEP_DATA_FILE )
     processed_sleep_df = process_sleep_data(sleep_df)
     generate_report(processed_sleep_df)
+    print (processed_sleep_df)
     logging.info ("Script DataPulse terminé")
     
