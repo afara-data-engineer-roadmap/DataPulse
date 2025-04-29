@@ -1,139 +1,60 @@
-# src/main.py
-
-import pandas as pd
 from pathlib import Path 
-import logging
-import numpy as np
+import pandas as pd 
 
-# Configuration du logging (simple pour commencer)
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+BASE_DIR = Path(__file__).resolve().parent.parent 
+DATA_DIR = BASE_DIR / "data"
+SLEEP_DATA_FILE = DATA_DIR / "Sommeil.csv"
 
-# Définir le chemin vers dossier du projet
-BASE_DIR = Path(__file__).resolve().parent.parent
+def afficher_rapport(df) :
+    print("\n--- Rapport Sommeil (Basique) ---\n")
+    avg_duration = df['duree'].mean()
+    max_duration = df['duree'].max()
+    min_duration = df['duree'].min()
+    if not pd.isna(avg_duration):
+        print(f"Durée moyenne du sommeil   : {avg_duration:.0f} minutes (~{avg_duration/60:.1f} heures)")
+        print(f"Durée minimale             : {min_duration:.0f} minutes (~{min_duration/60:.1f} heures)")
+        print(f"Durée maximale             : {max_duration:.0f} minutes (~{max_duration/60:.1f} heures)")
+        print("\n---------------------------------\n")
+#Lecture du fichier
+df = pd.read_csv(SLEEP_DATA_FILE)
+#Suppression des espaces insécables dans les noms de colonne
+df.columns = df.columns.str.replace('\u00A0', ' ', regex=False)
 
-# Utilise Pathlib pour une meilleure gestion des chemins (multi-OS)
+#Suppression des colonnes inutiles et renommage
+df = df.drop(columns=['Durée'])
+df = df.rename(columns={
+                        'Sommeil 4 semaines': "date" ,
+                        'Heure de coucher': "coucher" ,
+                        'Heure de lever': "lever" 
+                        }
+                )
+#Suppression des lignes non pertinentes
+df = df[~((df['Heure de coucher'] == '--') | (df['Heure de lever'] == '--'))]
 
-DATA_DIR = BASE_DIR / "data"  
-SLEEP_DATA_FILE = DATA_DIR / "Sommeil_Test.csv"
+#Changement des types de colonnes contentant des dates ou des horaires
+df["date"] = pd.to_datetime(df["date"])
+df["coucher"] = pd.to_datetime(df["date"].dt.strftime("%Y-%m-%d") + " " +df["coucher"],errors="coerce")
+df["lever"] = pd.to_datetime(df["date"].dt.strftime("%Y-%m-%d") + " " +df["lever"],errors="coerce")
 
-def load_sleep_data(file_path) : 
-    """Charge les données de sommeil depuis un csv"""
-    logging.info(f"Tentative de chargement des données depuis : {file_path}" )
-    if not file_path.exists() : 
-        logging.error(f"le fichier {file_path} n'esiste pas.")
-        return None
-    try : 
-        df=pd.read_csv(file_path)
-        logging.info(f"fichier csv chargé avec succés : {len(df)} lignes trouvées!")
-        #afficher un aperçu pour vérifier
-        logging.debug("apercçu des données chargées\n%s",df.head().to_string())
-        return df 
-    except Exception as e: 
-        logging.error(f"Erreur lors du chargement du csv : {e} ")
-        return None
+#Mise à jour de la date en fonction de l'heure 
+mask = df["lever"] <= df["coucher"]
+df.loc[mask, "lever"] += pd.Timedelta(days=1)
 
-def parse_duration(duration_str) : 
-    """convertir une durée 'Xh Ymn' en minutes totales """
-    if pd.isna(duration_str) or '.' not in duration_str : 
-        return None 
-    try : 
-        hours = 0 
-        minutes = 0 
-        #sépare les heures et les minutes
-        parts = duration_str.replace('min.','').strip().split("h ")
-        if len (parts) == 2 :
-            hours = int(parts[0]) 
-            if parts[1]:
-                minutes = int(parts[1]) 
-            elif 'h' not in duration_str : 
-                minutes = int(parts[0])
-        total_minutes = hours * 60 + minutes
-        
-        return total_minutes
-    except ValueError:
-        logging.warning (f"impossible de parser la duréé : '{duration_str}'")
-        return None
 
-def parse_heure(heure_str) : 
-    """convertir une heure '3:56 AM' date_time """
-    if pd.isna(heure_str) or '--'  in heure_str : 
-        return None 
-    try : 
-        heure = pd.to_datetime(heure_str)
-       
-        
-        return heure
-    except ValueError:
-        logging.warning (f"impossible de parser la duréé : '{heure_str}'")
-        return None
-    
+df["duree"] = df["lever"] - df["coucher"]
 
-def process_sleep_data(df) : 
-    """Traite les données de sommeil (ex: convertir duree en mn)
-    """
-    if df is None : 
-        logging.warning("DataFrame vide , aucun traitement effectué")
-        return None
-    
-    logging.info("Début du traitement de données...")
-    pd.options.mode.copy_on_write = True # Assure que la lors d'une écriture on fait une copie
-    processed_df = df.copy()
-    
-    #---- Tache principale pour jour 1 -----
-    #convertir la colonne durée en minutes totales 
-    processed_df['Duree_minutes'] = processed_df['Durée'].apply(parse_duration)
-    
-    logging.info("colonne 'Duree_minutes créée.")
-    logging.debug("Apercu après ajout Duree_minutes" , processed_df.head().to_string() )
-    
-    # --- Autres traitements (pour plus tard) ---
-   # TODO: Convertir 'Sommeil 4 semaines' en datetime
-    processed_df["date"] = pd.to_datetime(df["Sommeil 4 semaines"])
-   # TODO: Convertir 'Heure de coucher' et 'Heure de lever' en datetime/time
-    processed_df["coucher"] = processed_df['Heure de coucher'].apply(parse_heure)
-    processed_df["lever"] = processed_df['Heure de lever'].apply(parse_heure)
+#Calcul du nombre de minutes et du nombre d'heures de sommeil
+comps = df["duree"].dt.components
+df["heures"] = comps.days * 24 + comps.hours
+df["minutes"] = comps.minutes
+#calul de la durée de sommeil en minutes
+df["duree"] = df["duree"].dt.total_seconds() / 60
+#changement de format des colonnes coucher et lever datetime => str et 12h => 24h
+df["coucher"] = df["coucher"].dt.strftime("%H:%M")
+df["lever"] = df["lever"].dt.strftime("%H:%M")
 
-   # TODO: Calculer la durée réelle entre coucher et lever
-    processed_df["nombre_heures"] = processed_df["lever"] - processed_df["coucher"]
-    comps = processed_df['nombre_heures'].dt.components # split de l'heure en heures et minutes 
-    condition =  processed_df['nombre_heures'] >= pd.Timedelta(0)  # permet de comparer heures en mode timedelta 
-    processed_df['heures']   = np.where(
-        condition,  
-        comps.days * 24 + comps.hours,# total d'heures
-        comps.days * 24 + comps.hours + 24  # dans le cas ou decalage du à am pm 
-        )# dans le cas ou decalage du à am pm 
-       
-    
-    processed_df['minutes'] = comps.minutes       
-   # TODO: Nettoyer les noms de colonnes
-    processed_df["coucher"]=processed_df["Heure de coucher"] 
-    processed_df["lever"]=processed_df["Heure de lever"]
-    df =  processed_df[["date","coucher","lever","heures","minutes","Duree_minutes"]]
+afficher_rapport(df)
 
-    logging.info("Traitement des données terminé.")
-    return df
-    
-def generate_report (df) : 
-    
-    avg_duration = df['Duree_minutes'].mean()
-    max_duration = df['Duree_minutes'].max()
-    min_duration = df['Duree_minutes'].min()
-    
-    print ("\n--- Rapport Sommeil (Basique) ---")
-    if not pd.isna(avg_duration) : 
-        print(f"Durée moyenne du sommeil : {avg_duration:.0f} minutes (~{avg_duration/60:.1f} heures) ")
-        print(f"Durée minimale : {min_duration:.0f} minutes")
-        print(f"Durée maximale : {max_duration:.0f} minutes")
-    else : 
-        print(("Impossible de calculer la durée moyenne! (données manquantes ou erreur de parsing )"))
-        print("---------------------------------\n")
-        logging.info("Rapport généré et affiché.")
+print(df)
 
-if __name__ == "__main__" : 
-    logging.info ("Démarrage du script DataPulse")
-    sleep_df = load_sleep_data(SLEEP_DATA_FILE )
-    processed_sleep_df = process_sleep_data(sleep_df)
-    generate_report(processed_sleep_df)
-    print (processed_sleep_df)
-    logging.info ("Script DataPulse terminé")
-    
+
