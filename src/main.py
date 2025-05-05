@@ -3,10 +3,130 @@ import pandas as pd
 from datetime import timedelta
 from dateutil import parser
 from pandas import Timestamp
+import logging
+from logging.handlers import RotatingFileHandler
 
 BASE_DIR        = Path(__file__).resolve().parent.parent
 DATA_DIR        = BASE_DIR / "data"
-SLEEP_DATA_FILE = DATA_DIR / "Sommeil_Test.csv"
+SLEEP_DATA_FILE = DATA_DIR / "Sommeil.csv"
+COLS_REQ_STATS = ['date','coucher','lever','qualite','raw_coucher','raw_lever','only_coucher','only_lever','time_lever','duree','heures','minutes','weekend']
+
+def configure_logging(log_path="mon_script.log"):
+    """
+    Configure un logger global :
+     - Vide d'abord tous les handlers du root logger
+     - Ajoute un RotatingFileHandler (5 Mo max, 5 backups) en UTF-8-BOM, niveau DEBUG
+     - Ajoute un StreamHandler console niveau INFO
+    """
+    root = logging.getLogger()
+    # 1) on enlève tous les anciens handlers
+    for h in root.handlers[:]:
+        root.removeHandler(h)
+
+    # 2) handler fichier rotatif
+    try:
+        fh = RotatingFileHandler(
+            log_path,
+            maxBytes=5_000_000,
+            backupCount=5,
+            mode="w",
+            encoding="utf-8-sig"      # UTF-8 avec BOM
+        )
+        fh.setLevel(logging.DEBUG)
+        fh.setFormatter(logging.Formatter(
+            "%(asctime)s %(levelname)s: %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S"
+        ))
+    except PermissionError as e:
+        logger.error("Pas de droit d'écriture sur le log : %s", e)     
+    # 3) handler console
+    ch = logging.StreamHandler()
+    ch.setLevel(logging.DEBUG)
+    ch.setFormatter(logging.Formatter(
+        "%(asctime)s %(levelname)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S"
+    ))
+
+    # 4) on fixe le niveau root et on attache
+    root.setLevel(logging.DEBUG)
+    root.addHandler(fh)
+    root.addHandler(ch)
+
+configure_logging(DATA_DIR/"mon_script.log")
+logger = logging.getLogger(__name__)
+
+def controle_validite(row) : 
+    invalidite = "valide"
+    if row["Durée"] == '--' or pd.isna(row["Durée"]) :
+        invalidite =  "-Durée manquante"
+    if row["Heure de coucher"] == '--' or pd.isna(row["Heure de coucher"]) : 
+        invalidite +=   "-Heure de coucher manquante"
+    if row["Heure de lever"] == '--' or pd.isna(row["Heure de lever"]) : 
+        invalidite += "-Heure de lever manquante"
+    return invalidite
+
+
+def lire_fichier_pandas(chemin_fichier, encodages=('utf-8', 'latin-1', 'cp1252'), separateurs=(';', ',', '\t', '|', ':')):
+    """
+    Lit un fichier tabulaire (CSV/TXT) en testant plusieurs encodages et séparateurs avec pandas.
+
+    Paramètres :
+    - chemin_fichier (str) : chemin du fichier à lire
+    - encodages (tuple) : liste d'encodages à tester
+    - separateurs (tuple) : liste de séparateurs possibles
+
+    Retourne :
+    - dict avec 'dataframe' (pd.DataFrame), 'encodage_utilisé' et 'séparateur_utilisé'
+    - None si échec
+    """
+    for encodage in encodages:
+        for sep in separateurs:
+            try:
+                df = pd.read_csv(chemin_fichier, encoding=encodage, sep=sep)
+                
+                # Si le fichier n'est pas vide
+                if not df.empty and len(df.columns) >1:
+                    logger.info("fichier %s lu avec succès " ,  chemin_fichier )
+                    return {
+                        'dataframe': df,
+                        'encodage_utilisé': encodage,
+                        'séparateur_utilisé': sep
+                    }
+                    
+            except UnicodeDecodeError as e:
+                logger.warning("Erreur d'encodage avec %s : %s " ,  encodage, e )
+            except pd.errors.ParserError as e:
+                logger.warning("Erreur de séparateur avec %s : %s " ,  sep, e )
+                continue
+            except Exception as e:
+                logger.warning("Erreur inatendue avec %s : %s " ,  sep, e )
+                continue
+    logger.critical("Échec : Impossible de lire %s avec les encodages et séparateurs fournis." ,  chemin_fichier)        
+    print(f"Échec : Impossible de lire '{chemin_fichier}' avec les encodages et séparateurs fournis.")
+    return None
+
+def mins_to_hhmm(total_minutes):
+    """
+   Convertit un nombre de minutes depuis minuit en chaîne 'HH:MM'.
+
+   Parameters
+   ----------
+   total_minutes : float or int or NaN
+       Nombre de minutes écoulées depuis 00:00. Peut être fractionnaire ou NaN.
+
+   Returns
+   -------
+   str
+       Chaîne formatée 'HH:MM' ou 'N/A' si la valeur est manquante.
+   """
+   
+    if pd.isna(total_minutes):
+        return "N/A"
+    total_minutes = int(total_minutes)
+    hours = (total_minutes // 60) % 24
+    minutes = total_minutes % 60
+    return f"{hours:02d}:{minutes:02d}"
+
 
 def parse_time_ts(ts):
     """
@@ -33,7 +153,8 @@ def parse_time_ts(ts):
         return None
     try:
         return parser.parse(ts).time()
-    except Exception:
+    except Exception as e:
+        logger.debug("Impossible de parser %r en time : %s", ts, e)
         return None
 
     
@@ -60,8 +181,11 @@ def combine(row, time_col):
     pandas.Timestamp or pd.NaT
         Un timestamp complet (date + heure), ou `NaT` si `row[time_col]` est None.
     """
+    # NOTE: for large DataFrames, consider vectorizing with pd.to_datetime(...)
+
     t = row[time_col]
     if t is None:
+        logger.debug("Aucune heure détectée dans '%s' pour la date %s",time_col, row.get('date'))
         return pd.NaT
     return Timestamp(
         year=row['date'].year,
@@ -71,7 +195,7 @@ def combine(row, time_col):
         minute=t.minute
     )
 
-def calculer_statistiques_sommeil (df) : 
+def calculer_stats_globales (df) : 
     """
     Calcule les statistiques de sommeil à partir d'un DataFrame.
 
@@ -98,25 +222,67 @@ def calculer_statistiques_sommeil (df) :
     tuple
         (totales, normales, courtes, longues,
          moyenne, mediane, minimale, maximale, ecart_type)
+    """    
+    logger.info("Début du calcul des stats globales sur %d lignes", len(df))
+
+    df_clean = df.dropna(subset=COLS_REQ_STATS)
+    try :
+        if df_clean.empty:
+            logger.warning("Aucune donnée valide pour le calcul des statistiques")
+        return (0,0,0,0,0,0,0,0,0)
+        totales = len(df_clean)
+        normales = df_clean[(df_clean['duree'] >= 420) & (df_clean['duree'] <= 540)].shape[0]
+        courtes  = df_clean[df_clean['duree'] < 420].shape[0]
+        longues  = df_clean[df_clean['duree'] > 540].shape[0]
+        avg    = df_clean['duree'].mean()
+        med    = df_clean['duree'].median()
+        mina   = df_clean['duree'].min()
+        maxa   = df_clean['duree'].max()
+        stddev = df_clean['duree'].std()
+        logger.info("Stats globales — totales: %d, moy: %.1f, médiane: %.1f, min: %.1f, max: %.1f",totales, avg, med, mina, maxa)
+        return totales,normales,courtes,longues,avg,med,mina,maxa,stddev
+    except Exception as e : 
+        logger.exception("Erreur lors du calcul des stats globales : %s" , e) 
+        return (0, 0, 0, 0, 0.0, 0.0, 0.0, 0.0, 0.0)
+
+def calculer_stats_par_periode(df):
     """
-    df_clean = df[df['duree'].notna()]
-    totales = len(df_clean)
-    normales = df_clean[(df_clean['duree'] >= 420) & (df_clean['duree'] <= 540)].shape[0]
-    courtes  = df_clean[df_clean['duree'] < 420].shape[0]
-    longues  = df_clean[df_clean['duree'] > 540].shape[0]
-    avg    = df_clean['duree'].mean()
-    med    = df_clean['duree'].median()
-    mina   = df_clean['duree'].min()
-    maxa   = df_clean['duree'].max()
-    stddev = df_clean['duree'].std()
-    return totales,normales,courtes,longues,avg,med,mina,maxa,stddev
+    Retourne (moyenne_semaine, moyenne_weekend).
+    """
+    logger.info("Début du calcul des stats par période")
+
+    try :
+        moyennes = df.groupby(df['date'].dt.weekday >= 5)['duree'].mean()
+        moyennes = moyennes.reindex([False, True], fill_value=0)
+        logger.info("Stats periodiques — weekend:  %.1f, semaine: %.1f", moyennes[False], moyennes[True])
+        
+        return moyennes[False], moyennes[True]
+    except Exception as e : logger.exception ("Erreur lors du calcul des stats par pèriode : %s ", e)
+
+def calculer_heures_medianes(df):
+    """
+    Retourne (median_coucher, median_lever).
+    """
+    logger.info("Début du calcul des heures médianes")
+
+    try : 
+        median_coucher = df['mins_coucher'].dropna().median()
+        median_lever = df['mins_lever'].dropna().median()
+        logger.info("Heures médianes calculées — coucher: %d min, lever: %d min", median_coucher, median_lever)
+        return median_coucher, median_lever
+    
+    except Exception as e : 
+        logger.exception("Erreur lors du calcule des heures médianes", e )
+        return 0.0,0.0
+        
+
 
 def afficher_rapport(stats_sommeil ,date_min,date_max):
     """
     Affiche un rapport de sommeil à l’écran, avec statistiques et période.
 
     Cette fonction reçoit :
-      - stats_sommeil : tuple de 9 valeurs retourné par `calculer_statistiques_sommeil`,
+      - stats_sommeil : tuple de 9 valeurs 
           dans l’ordre (totales, normales, courtes, longues,
           moyenne, mediane, minimale, maximale, ecart_type).
       - date_min      : date de début de la période (str ou pd.Timestamp).
@@ -145,24 +311,25 @@ def afficher_rapport(stats_sommeil ,date_min,date_max):
         Le rapport est directement imprimé sur la sortie standard.
     """
     print(f"\n--- Rapport Sommeil du {date_min} au {date_max} ---\n")
-    print(f"Nombre de nuits analysées : {stats_sommeil [0]}")
-    print(f"  - normales : {stats_sommeil [1]}")
-    print(f"  - courtes  : {stats_sommeil  [2]}")
-    print(f"  - longues  : {stats_sommeil [3]}\n")
-    print(f"Durée moyenne   : {stats_sommeil [4]:.0f} min (~{stats_sommeil [4]/60:.1f} h)")
-    print(f"Durée médiane   : {stats_sommeil [5]:.0f} min (~{stats_sommeil [5]/60:.1f} h)")
-    print(f"Durée minimale  : {stats_sommeil [6]:.0f} min (~{stats_sommeil [6]/60:.1f} h)")
-    print(f"Durée maximale  : {stats_sommeil [7]:.0f} min (~{stats_sommeil [7]/60:.1f} h)")
-    print(f"Ecart-type      : {stats_sommeil [8]:.0f} min")
+    print(f"Nombre de nuits analysées   : {stats_sommeil [0]}")
+    print(f"  - normales                : {stats_sommeil [1]}")
+    print(f"  - courtes                 : {stats_sommeil  [2]}")
+    print(f"  - longues                 : {stats_sommeil [3]}\n")
+    print(f"Durée moyenne               : {stats_sommeil [4]:.0f} min (~{stats_sommeil [4]/60:.1f} h)")
+    print(f"Durée médiane(1)            : {stats_sommeil [5]:.0f} min (~{stats_sommeil [5]/60:.1f} h)")
+    print(f"Durée minimale              : {stats_sommeil [6]:.0f} min (~{stats_sommeil [6]/60:.1f} h)")
+    print(f"Durée maximale              : {stats_sommeil [7]:.0f} min (~{stats_sommeil [7]/60:.1f} h)")
+    print(f"Ecart-type                  : {stats_sommeil [8]:.0f} min\n")
+    print(f"Durée moyenne en semaine    : {stats_sommeil [9]:.0f} min (~{stats_sommeil[9]/60:.1f} h)")
+    print(f"Durée moyenne le week-end   : {stats_sommeil [10]:.0f} min (~{stats_sommeil[10]/60:.1f} h)\n")
+    print(f"Heure médiane de coucher(1) : {mins_to_hhmm(stats_sommeil [11])}")
+    print(f"Heure médiane de lever(1)   : {mins_to_hhmm(stats_sommeil [12])}")
+    print("\n---------------------------------------------------\n")
     print("\n(1) Médiane moins sensible aux valeurs extrêmes")
     print("(2) Ecart-type faible → sommeil régulier\n")
+
     
-import pandas as pd
-import re
-from pathlib import Path
-from datetime import timedelta
-from dateutil import parser
-from pandas import Timestamp
+
 
 def prepare_sleep_df(path):
     """
@@ -194,92 +361,131 @@ def prepare_sleep_df(path):
         Le DataFrame enrichi des colonnes :
         ['date', 'coucher', 'lever', 'duree', 'heures', 'minutes', …]
     """
-    # 1) Lecture
-    df = pd.read_csv(path)
+    try:
 
-    # 2) Nettoyage des noms de colonnes
-    df.columns = df.columns.str.replace('\u00A0', ' ', regex=False)
-
-    # 3) Sélection & renommage
-    df = (
-        df
-        .drop(columns=['Durée'], errors='ignore')
-        .rename(columns={
-            'Sommeil 4 semaines': 'date',
-            'Heure de coucher'  : 'coucher',
-            'Heure de lever'    : 'lever'
-        })
-    )
-
-    # 4) Conversion date
-    df['date'] = pd.to_datetime(df['date'], errors='coerce')
-
-    # 5) Copie des heures brutes & normalisation des "--"
-    df['raw_coucher'] = df['coucher'].astype(str).replace('--', pd.NA)
-    df['raw_lever']   = df['lever'  ].astype(str).replace('--', pd.NA)
-
-    # 6) Nettoyage et padding
-    for col in ['raw_coucher', 'raw_lever']:
-        df[col] = (
-            df[col]
-            .str.replace(r'\s+', ' ', regex=True)   # espaces multiples → espace
-            .str.strip()                            # trim
-            .str.strip("'")                         # retirer apostrophes
-            .str.replace(r'^(\d):', r'0\1:', regex=True)  # padding x: → 0x:
-        )
-
-    # 7) Extraction du pattern horaire
-    time_pattern = r'(\d{2}:\d{2}\s?[AP]M)'
-    df['only_coucher'] = df['raw_coucher'].str.extract(time_pattern, expand=False).str.strip()
-    df['only_lever']   = df['raw_lever'  ].str.extract(time_pattern, expand=False).str.strip()
-
-    # 8) Parsing en `time`
-    def _parse(ts):
-        if pd.isna(ts):
+        logger.info("Début de prepare_sleep_df pour %s", path)
+        
+        #  Lecture
+        df =lire_fichier_pandas(path)["dataframe"]
+        if df is None:
+            logger.critical("Abandon de prepare_sleep_df : échec de lecture de %s", path)
             return None
-        try:
-            return parser.parse(ts).time()
-        except:
-            return None
+        # Nettoyage des noms de colonnes
+        df.columns = df.columns.str.replace('\u00A0', ' ', regex=False)
+        
+        #controle qualite
+        df["qualite"] = df.apply(controle_validite, axis=1)
+        logger.debug("Avant drop/rename : shape=%s, colonnes=%s", df.shape, df.columns.tolist())
 
-    df['time_coucher'] = df['only_coucher'].apply(_parse)
-    df['time_lever']   = df['only_lever'].apply(_parse)
-
-    # 9) Combinaison date + time → Timestamp
-    def _combine(r, col):
-        t = r[col]
-        if t is None:
-            return pd.NaT
-        return Timestamp(
-            year = r['date'].year,
-            month= r['date'].month,
-            day  = r['date'].day,
-            hour = t.hour,
-            minute=t.minute
+        # Sélection & renommage
+        df = (
+            df
+            .drop(columns=['Durée'], errors='ignore')
+            .rename(columns={
+                'Sommeil 4 semaines': 'date',
+                'Heure de coucher'  : 'coucher',
+                'Heure de lever'    : 'lever'
+            })
         )
+        logger.debug("Après drop/rename  : shape=%s, colonnes=%s", df.shape, df.columns.tolist())
 
-    df['time_coucher'] = df['only_coucher'].apply(parse_time_ts)
-    df['time_lever']   = df['only_lever'].apply(parse_time_ts)
+        # 4) Conversion date
+        df['date'] = pd.to_datetime(df['date'], errors='coerce')
+        if df['date'].isna().any():
+            logger.warning("Certaines dates n'ont pas pu être parsées")
+        if df['date'].isna().all():
+            logger.warning("Toutes les dates sont NaT après conversion pour %s", path)
+        
+        # 5) Copie des heures brutes & normalisation des "--"
+        df['raw_coucher'] = df['coucher'].astype(str).replace('--', pd.NA)
+        df['raw_lever']   = df['lever'  ].astype(str).replace('--', pd.NA)
+    
+        # 6) Nettoyage et padding
+        for col in ['raw_coucher', 'raw_lever']:
+            df[col] = (
+                df[col]
+                .str.replace(r'\s+', ' ', regex=True)   # espaces multiples → espace
+                .str.strip()                            # trim
+                .str.strip("'")                         # retirer apostrophes
+                .str.replace(r'^(\d):', r'0\1:', regex=True)  # padding x: → 0x:
+            )
+    
+        # 7) Extraction du pattern horaire
+        time_pattern = r'(\d{2}:\d{2}\s?[AP]M)'
+        df['only_coucher'] = df['raw_coucher'].str.extract(time_pattern, expand=False).str.strip()
+        df['only_lever']   = df['raw_lever'  ].str.extract(time_pattern, expand=False).str.strip()
+        
+        # conversion time
+        df['time_coucher'] = df['only_coucher'].apply(parse_time_ts)
+        df['time_lever']   = df['only_lever'].apply(parse_time_ts)
+        
+        # reconstruction 
+        df['coucher'] = df.apply(combine, args=('time_coucher',), axis=1)
+        df['lever']   = df.apply(combine, args=('time_lever',), axis=1)
+    
+        # Ajustement nuits après minuit
+        mask = df['lever'] <= df['coucher']
+        df.loc[mask, 'lever'] += timedelta(days=1)
+    
+        # Calcul durée et composantes durée
+        df['duree'] = (df['lever'] - df['coucher']).dt.total_seconds() / 60
+        comps = (df['lever'] - df['coucher']).dt.components
+        df['heures']  = comps.days * 24 + comps.hours
+        df['minutes'] = comps.minutes
+        
+        df['weekend'] = df['date'].dt.dayofweek >= 5
+        
+        df['coucher_dt'] = df['coucher'] # Garde une copie des datetimes si besoin ailleurs
+        df['lever_dt'] = df['lever']
+    
+        df['mins_coucher'] = df['coucher_dt'].dt.hour * 60 + df['coucher_dt'].dt.minute
+        df['mins_lever'] = df['lever_dt'].dt.hour * 60 + df['lever_dt'].dt.minute
+        
+        # Validation des colonnes requises
+        missing = set(COLS_REQ_STATS) - set(df.columns)
+        
+        if missing:
+            logger.error("Colonnes manquantes après nettoyage : %s", missing)
+            raise KeyError(f"Colonnes manquantes : {missing}")
 
-    # Ajustement nuits après minuit
-    mask = df['lever'] <= df['coucher']
-    df.loc[mask, 'lever'] += timedelta(days=1)
-
-    # 10) Calcul durée et composantes
-    df['duree'] = (df['lever'] - df['coucher']).dt.total_seconds() / 60
-    comps = (df['lever'] - df['coucher']).dt.components
-    df['heures']  = comps.days * 24 + comps.hours
-    df['minutes'] = comps.minutes
-
-    return df
+        logger.info(
+            "prepare_sleep_df terminée : %d lignes, %d colonnes",
+            df.shape[0], df.shape[1]
+        )
+        return df
+    except KeyError : raise
+    except Exception : logger.exception('Erreur inattendue dans prepare_sleep_df pour %s', path)
 
 
-df = prepare_sleep_df(SLEEP_DATA_FILE)
-stats_sommeil  = calculer_statistiques_sommeil (df)
+def main() :
+    
+    if not SLEEP_DATA_FILE.exists():
+        logger.critical("fichier introuvable : %s  " ,  SLEEP_DATA_FILE )
+        raise FileNotFoundError(f"Fichier introuvable : {SLEEP_DATA_FILE}")
+    else :
+        df = prepare_sleep_df(SLEEP_DATA_FILE)
 
-afficher_rapport(stats_sommeil ,df['date'].min().strftime('%A %d %B %Y'),df['date'].max().strftime('%A %d %B %Y'))
+
+    stats_glob   = calculer_stats_globales(df)
+    stats_periode = calculer_stats_par_periode(df)
+    heures_med   = calculer_heures_medianes(df)
+
+
+    stats_sommeil  = stats_glob + stats_periode + heures_med
+
+    # Nettoyage des noms de colonnes
+
+
+    afficher_rapport(stats_sommeil ,df['date'].min().strftime('%A %d %B %Y'),df['date'].max().strftime('%A %d %B %Y'))
 #affichage du dataframe
-df_display = df[~((df['coucher'].isna()) | (df['lever'].isna()))].copy() # Filtre sur une copie
+    df_display = df.copy() # Filtre sur une copie
+    df_display['jour'] = df_display['date'].dt.day_name()
 # Crée une colonne formatée pour l'affichage SEULEMENT dans cette copie
-df_display['duree_h'] = "~" + (df_display['duree'] / 60).round(1).astype(str) + " h"
-print(df_display[["date",'only_coucher','only_lever','duree_h','heures','minutes']])
+    df_display['duree_h'] = "~" + (df_display['duree'] / 60).round(1).astype(str) + " h"
+
+    df_display =df_display[["date","coucher","lever","jour","duree_h","qualite"]]
+    print(df_display )
+
+if __name__ == "__main__" :
+    main()
+
