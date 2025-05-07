@@ -102,7 +102,6 @@ def lire_fichier_pandas(chemin_fichier, encodages=('utf-8', 'latin-1', 'cp1252')
                 logger.warning("Erreur inatendue avec %s : %s " ,  sep, e )
                 continue
     logger.critical("Échec : Impossible de lire %s avec les encodages et séparateurs fournis." ,  chemin_fichier)        
-    print(f"Échec : Impossible de lire '{chemin_fichier}' avec les encodages et séparateurs fournis.")
     return None
 
 def mins_to_hhmm(total_minutes):
@@ -223,13 +222,18 @@ def calculer_stats_globales (df) :
         (totales, normales, courtes, longues,
          moyenne, mediane, minimale, maximale, ecart_type)
     """    
+    COLS_REQ_STATS = ['date','coucher','lever','qualite','raw_coucher','raw_lever','only_coucher','only_lever','time_lever','duree','heures','minutes','weekend']
+
     logger.info("Début du calcul des stats globales sur %d lignes", len(df))
 
-    df_clean = df.dropna(subset=COLS_REQ_STATS)
+   
+    df_clean = df[df['duree'].notna()] # La ligne clé
+
+   
     try :
         if df_clean.empty:
             logger.warning("Aucune donnée valide pour le calcul des statistiques")
-        return (0,0,0,0,0,0,0,0,0)
+            return (0,0,0,0,0,0,0,0,0)
         totales = len(df_clean)
         normales = df_clean[(df_clean['duree'] >= 420) & (df_clean['duree'] <= 540)].shape[0]
         courtes  = df_clean[df_clean['duree'] < 420].shape[0]
