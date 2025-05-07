@@ -15,47 +15,86 @@ DATA_DIR        = BASE_DIR / "data"
 SLEEP_DATA_FILE = DATA_DIR / "Sommeil.csv"
 COLS_REQ_STATS = ['date','coucher','lever','qualite','raw_coucher','raw_lever','only_coucher','only_lever','time_lever','duree','heures','minutes','weekend']
 
-def visualiser_coucher_vs_duree(df):
+def visualiser_coucher_vs_duree(df, *, avec_regression: bool = True, ax=None):
+    
     # S'assurer que les colonnes nécessaires existent et sont valides
     data_plot = df[['mins_coucher', 'duree']].dropna()
 
     if data_plot.empty:
         logger.info("Données insuffisantes pour visualiser heure de coucher vs durée.")
         return
+    
+    # 2. Nuage de points
+    sns.scatterplot(data=data_plot, x='mins_coucher', y='duree',
+                   alpha=0.6, edgecolor="w", ax=ax)
+    
+    # 3. Régression linéaire (optionnelle)
+    if avec_regression:
+        sns.regplot(data=data_plot, x='mins_coucher', y='duree',
+                    scatter=False, ax=ax, line_kws={'linewidth': 2})
+        
+    # 4. Mise en forme
+    ax.set(title="Durée du sommeil en fonction de l'heure de coucher",
+           xlabel="Heure de coucher (minutes depuis minuit)",
+           ylabel="Durée du sommeil (minutes)")
+    ax.grid(True)
 
-    plt.figure(figsize=(10, 6))
-    sns.scatterplot(x='mins_coucher', y='duree', data=data_plot)
-    plt.title('Durée du Sommeil en fonction de l\'Heure de Coucher')
-    plt.xlabel('Heure de Coucher (minutes depuis minuit)')
-    plt.ylabel('Durée du Sommeil (minutes)')
-    plt.grid(True)
+    
+    # 5. Affichage
     plt.tight_layout()
+    
+    logger.info("nuage de points coucher vs durée (+ régression) OK.")
     try :     
         plt.show()
+        logger.info("Scatter coucher vs durée (+ régression) affiché avec succès.")
     except Exception as e :
         logger.info("Echec lors de la visualisation Durée du Sommeil en fonction de l\'Heure de Coucher : %s", e)
-    logger.info("VisualisationDurée du Sommeil en fonction de l\'Heure de Coucher créée avec succès.")
     
-def visualiser_evolution_duree(df):
+    
+def visualiser_evolution_duree(df,*,window : int = 7 ,ax = None):
+    
+    """affiche la durée de sommeil et la moyenne mobile centrée sur 7 jours par défaut 
+    Parameters 
+    
+    df : pd.DataFrame - contient 'date' et 'duree'
+    window : int - taille de la fenêtre glissante (en jours)
+    ax : matplotlib.axes.Axes ou None
+        Axe matplotlib existant sur lequel tracer (utile pour superposer plusieurs courbes 
+        sur un même graphique). Si None, une nouvelle figure est créée automatiquement.
+    
+    """
     duree_valide = df[['date', 'duree']].dropna() # Garde date et duree, enlève les NaN de duree
+    df_ord = duree_valide.sort_values('date')
+    
+    if ax is None:
+        fig,ax = plt.subplots(figsize=(20,16))
+
 
     if duree_valide.empty:
         logger.info("Aucune donnée de durée valide pour visualiser l'évolution.")
         return
 
-    plt.figure(figsize=(20, 16))
-    sns.lineplot(x='date', y='duree', data=duree_valide, marker='o') # 'o' ajoute des points sur la ligne
-    plt.title('Évolution de la Durée du Sommeil au Fil du Temps')
-    plt.xlabel('Date')
-    plt.ylabel('Durée du Sommeil (minutes)')
-    plt.xticks(rotation=45) # Tourne les étiquettes de date pour lisibilité
-    plt.grid(True)
-    plt.tight_layout() # Ajuste pour que tout rentre bien
+    sns.lineplot(ax = ax,x ='date', y='duree', data=df_ord, marker='o',label = "Durée nuit", alpha = 0.4) # 'o' ajoute des points sur la ligne
+    rolling = (
+        df_ord.set_index('date')['duree']
+              .rolling(window=window, center=True, min_periods=window//2)
+              .mean()
+    )
+    ax.plot(rolling.index, rolling.values,
+            linewidth=2, label=f"Moyenne mobile ({window}j)")
+    ax.set_title("Évolution de la durée de sommeil")
+    ax.set_xlabel("Date")
+    ax.set_ylabel("Durée du sommeil (minutes)")
+    ax.legend()
+    ax.grid(True)
+    plt.xticks(rotation=45)
+    plt.tight_layout()
     try : 
         plt.show()
     except Exception as e :
         logger.info("Echec lors de la visualisation  Évolution de la Durée du Sommeil au Fil du Temps:  %s", e)
     logger.info("Visualisation Évolution de la durée du sommeil créée avec succès.")
+    
 def visualiser_distribution_duree(df) : 
     
     duree_valide = df['duree'].dropna()
@@ -71,7 +110,7 @@ def visualiser_distribution_duree(df) :
     plt.title('Distribution de la durée du sommeil')
     plt.xlabel('Durée du sommeil (mns)')
     plt.ylabel('Fréquence (nbr nuits)')
-    plt.grid(axis='y',alpha = 0.75)
+    plt.grid(True)
     try : 
         plt.show()
     except Exception as e :
