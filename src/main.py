@@ -5,11 +5,81 @@ from dateutil import parser
 from pandas import Timestamp
 import logging
 from logging.handlers import RotatingFileHandler
+import matplotlib.pyplot as plt 
+
+import seaborn as sns
+
 
 BASE_DIR        = Path(__file__).resolve().parent.parent
 DATA_DIR        = BASE_DIR / "data"
 SLEEP_DATA_FILE = DATA_DIR / "Sommeil.csv"
 COLS_REQ_STATS = ['date','coucher','lever','qualite','raw_coucher','raw_lever','only_coucher','only_lever','time_lever','duree','heures','minutes','weekend']
+
+def visualiser_coucher_vs_duree(df):
+    # S'assurer que les colonnes nécessaires existent et sont valides
+    data_plot = df[['mins_coucher', 'duree']].dropna()
+
+    if data_plot.empty:
+        logger.info("Données insuffisantes pour visualiser heure de coucher vs durée.")
+        return
+
+    plt.figure(figsize=(10, 6))
+    sns.scatterplot(x='mins_coucher', y='duree', data=data_plot)
+    plt.title('Durée du Sommeil en fonction de l\'Heure de Coucher')
+    plt.xlabel('Heure de Coucher (minutes depuis minuit)')
+    plt.ylabel('Durée du Sommeil (minutes)')
+    plt.grid(True)
+    plt.tight_layout()
+    try :     
+        plt.show()
+    except Exception as e :
+        logger.info("Echec lors de la visualisation Durée du Sommeil en fonction de l\'Heure de Coucher : %s", e)
+    logger.info("VisualisationDurée du Sommeil en fonction de l\'Heure de Coucher créée avec succès.")
+    
+def visualiser_evolution_duree(df):
+    duree_valide = df[['date', 'duree']].dropna() # Garde date et duree, enlève les NaN de duree
+
+    if duree_valide.empty:
+        logger.info("Aucune donnée de durée valide pour visualiser l'évolution.")
+        return
+
+    plt.figure(figsize=(20, 16))
+    sns.lineplot(x='date', y='duree', data=duree_valide, marker='o') # 'o' ajoute des points sur la ligne
+    plt.title('Évolution de la Durée du Sommeil au Fil du Temps')
+    plt.xlabel('Date')
+    plt.ylabel('Durée du Sommeil (minutes)')
+    plt.xticks(rotation=45) # Tourne les étiquettes de date pour lisibilité
+    plt.grid(True)
+    plt.tight_layout() # Ajuste pour que tout rentre bien
+    try : 
+        plt.show()
+    except Exception as e :
+        logger.info("Echec lors de la visualisation  Évolution de la Durée du Sommeil au Fil du Temps:  %s", e)
+    logger.info("Visualisation Évolution de la durée du sommeil créée avec succès.")
+def visualiser_distribution_duree(df) : 
+    
+    duree_valide = df['duree'].dropna()
+    
+    if duree_valide.empty : 
+        logger.info("aucune donnnée de durée valide pour générer la visualisation.")
+        return 
+    
+    plt.figure (figsize = (20,16))
+    sns.histplot(duree_valide,kde =True ,bins=10)
+    #plt.hist(duree_valide, bins=10, edgecolor='black', alpha=0.7)
+    
+    plt.title('Distribution de la durée du sommeil')
+    plt.xlabel('Durée du sommeil (mns)')
+    plt.ylabel('Fréquence (nbr nuits)')
+    plt.grid(axis='y',alpha = 0.75)
+    try : 
+        plt.show()
+    except Exception as e :
+        logger.info("Echec lors de la visualisation Distribution de la durée du sommeil : %s", e)
+
+    logger.info("Visualisation Distribution de la durée du sommeil créée avec succès.")
+
+
 
 def configure_logging(log_path="mon_script.log"):
     """
@@ -469,17 +539,11 @@ def main() :
     else :
         df = prepare_sleep_df(SLEEP_DATA_FILE)
 
-
     stats_glob   = calculer_stats_globales(df)
     stats_periode = calculer_stats_par_periode(df)
     heures_med   = calculer_heures_medianes(df)
 
-
     stats_sommeil  = stats_glob + stats_periode + heures_med
-
-    # Nettoyage des noms de colonnes
-
-
     afficher_rapport(stats_sommeil ,df['date'].min().strftime('%A %d %B %Y'),df['date'].max().strftime('%A %d %B %Y'))
 #affichage du dataframe
     df_display = df.copy() # Filtre sur une copie
@@ -489,7 +553,9 @@ def main() :
 
     df_display =df_display[["date","coucher","lever","jour","duree_h","qualite"]]
     print(df_display )
-
+    visualiser_distribution_duree(df) # df ici est le DataFrame retourné par prepare_sleep_df
+    visualiser_evolution_duree(df)
+    visualiser_coucher_vs_duree(df)
 if __name__ == "__main__" :
     main()
 
