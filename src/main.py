@@ -34,6 +34,37 @@ def parse_args():
     parser.add_argument("--viz", action="store_true", help="Afficher et sauvegarder les visualisations")
     return parser.parse_args()
 
+def traduire_colonne_date_en_francais(serie_datetime: pd.Series, format_str='%A %d %B %Y') -> pd.Series:
+    """Traduit une série de dates datetime en format français, sans apply (vectorisé).
+
+    Parameters
+    ----------
+    serie_datetime : pd.Series
+        Colonne de type datetime.
+    format_str : str
+        Format de date à appliquer avant traduction.
+
+    Returns
+    -------
+    pd.Series
+        Chaîne de dates traduites en français.
+    """
+    jours = {
+        "Monday": "Lundi", "Tuesday": "Mardi", "Wednesday": "Mercredi",
+        "Thursday": "Jeudi", "Friday": "Vendredi", "Saturday": "Samedi", "Sunday": "Dimanche"
+    }
+
+    mois = {
+        "January": "Janvier", "February": "Février", "March": "Mars", "April": "Avril",
+        "May": "Mai", "June": "Juin", "July": "Juillet", "August": "Août",
+        "September": "Septembre", "October": "Octobre", "November": "Novembre", "December": "Décembre"
+    }
+
+    dates_str = serie_datetime.dt.strftime(format_str)
+    dates_str = dates_str.replace(jours, regex=True)
+    dates_str = dates_str.replace(mois, regex=True)
+
+    return dates_str
 def traduire_date_en_francais(texte: str) -> str:
     """Traduit les jours et mois anglais vers le français dans une chaîne de date.
 
@@ -436,6 +467,9 @@ def lire_fichier_pandas(
     for encodage in encodages:
         for sep in separateurs:
             try:
+                
+                if hasattr(chemin_fichier, "seek"):
+                    chemin_fichier.seek(0)
                 df = pd.read_csv(chemin_fichier, encoding=encodage, sep=sep)
 
                 if not df.empty and len(df.columns) > 1:
@@ -682,7 +716,11 @@ def prepare_sleep_df(path: str) -> pd.DataFrame | None:
     try:
         logger.info("Début de prepare_sleep_df pour %s", path)
 
-        resultat = lire_fichier_pandas(path)
+        if hasattr(path, 'read'):  # Cas Streamlit
+            path.seek(0)  # Rewind en cas de plusieurs lectures
+            resultat = lire_fichier_pandas(path)
+        else:
+            resultat = lire_fichier_pandas(str(path))
         if resultat is None:
             logger.critical("Abandon de prepare_sleep_df : échec de lecture de %s", path)
             return None
