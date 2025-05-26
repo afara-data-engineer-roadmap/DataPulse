@@ -51,20 +51,50 @@ DataPulse/
 ├── .flake8                   # (optionnel) Config flake8
 └── README.md                 # Ce fichier
 ```
-# DataPulse – Analyseur de Données de Sommeil Personnelles
+🛠️ Prérequis & Installation
+Python 3.10 ou supérieur recommandé
 
-**DataPulse** est un outil Python open-source pour l’analyse et la visualisation de données de sommeil personnelles, conçu à la fois pour l’apprentissage du data engineering, de l’analyse de données, et pour obtenir des insights utiles sur ses propres habitudes de sommeil.
+Installation rapide des dépendances :
 
----
+```bash
+Copier
+Modifier
+pip install -r requirements.txt
+🕹️ Utilisation
+Cloner le dépôt GitHub
+```
+Installer les dépendances
 
-## 🚀 Objectifs du Projet
+Placer vos fichiers de sommeil CSV dans le dossier data/
 
-- Apprentissage pratique du data engineering, de la qualité logicielle (tests, CI) et de l’analyse de données avec Python et Pandas.
-- Extraction d’indicateurs-clés à partir de données personnelles issues de montres connectées ou d’applications.
-- Création d’un outil simple, modulaire, robuste, testé et automatisé.
+Exécuter le script principal :
 
----
+```bash
+Copier
+Modifier
+python src/main.py
+```
+Consulter le rapport dans la console, les graphiques à l’écran, et les logs détaillés dans data/mon_script.log
 
+🔁 Intégration Continue (CI)
+Chaque commit/pull request déclenche automatiquement :
 
+Vérification du formatage (black, isort)
 
+Linting (flake8, ruff)
 
+Exécution des tests unitaires avec couverture (badge à venir)
+
+Le fichier ci.yml est disponible dans .github/workflows/.
+
+🧑‍🔬 Prochaines Étapes
+Amélioration des visualisations (options, interactivité, export)
+
+Interface CLI avancée (argparse)
+
+Export rapport en PDF ou HTML
+
+Optimisation de la couverture de tests
+
+✨ Remerciements
+Projet développé pour l’apprentissage personnel de la data, la qualité logicielle et l’analyse exploratoire.
