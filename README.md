@@ -35,6 +35,7 @@
 
 ## 📦 Structure du Projet
 
+```text
 DataPulse/
 ├── data/                     # Données brutes (ex: Sommeil.csv, logs…)
 ├── src/                      # Code source Python
@@ -49,8 +50,7 @@ DataPulse/
 ├── pytest.ini                # Config Pytest
 ├── .flake8                   # (optionnel) Config flake8
 └── README.md                 # Ce fichier
-
-
+```
 # DataPulse – Analyseur de Données de Sommeil Personnelles
 
 **DataPulse** est un outil Python open-source pour l’analyse et la visualisation de données de sommeil personnelles, conçu à la fois pour l’apprentissage du data engineering, de l’analyse de données, et pour obtenir des insights utiles sur ses propres habitudes de sommeil.
