@@ -59,6 +59,7 @@ DataPulse/
 └── README.md                 # Ce fichier
 
 
+
 🛠️ Prérequis & Installation
 Python 3.10 ou supérieur recommandé
 
