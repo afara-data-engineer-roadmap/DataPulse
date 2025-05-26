@@ -87,12 +87,12 @@ Exécution des tests unitaires avec couverture (badge à venir)
 
 Le fichier ci.yml est disponible dans .github/workflows/.
 
-🧑‍🔬 Prochaines Étapes
-Amélioration des visualisations (options, interactivité, export)
+## 🧑‍🔬 Prochaines Étapes
 
-Export rapport en PDF ou HTML
-
-Optimisation de la couverture de tests
+- Amélioration des visualisations (options, interactivité, export)
+- Export du rapport en PDF ou HTML depuis la CLI
+- Optimisation de la couverture de tests
+- Ajout de tests d’intégration sur la CLI (si souhaité)
 
 ✨ Remerciements
 Projet développé pour l’apprentissage personnel de la data, la qualité logicielle et l’analyse exploratoire.
