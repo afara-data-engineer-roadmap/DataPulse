@@ -35,8 +35,8 @@
 
 ## 📦 Structure du Projet
 
-
-'''DataPulse/
+'''
+DataPulse/
 ├── data/                     # Données brutes (ex: Sommeil.csv, logs…)
 ├── src/                      # Code source Python
 │   └── main.py
