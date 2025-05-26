@@ -35,7 +35,6 @@
 
 ## 📦 Structure du Projet
 
-'''
 DataPulse/
 ├── data/                     # Données brutes (ex: Sommeil.csv, logs…)
 ├── src/                      # Code source Python
@@ -49,7 +48,8 @@ DataPulse/
 ├── pyproject.toml            # Config outils (Black, isort, flake8…)
 ├── pytest.ini                # Config Pytest
 ├── .flake8                   # (optionnel) Config flake8
-└── README.md                 # Ce fichier'''
+└── README.md                 # Ce fichier
+
 
 # DataPulse – Analyseur de Données de Sommeil Personnelles
 
