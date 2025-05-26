@@ -42,9 +42,7 @@ Tests unitaires (Pytest) avec couverture, CI GitHub Actions
 Qualité de code : linting (black, isort, flake8, ruff)
 
 📦 Structure du Projet
-text
-Copier
-Modifier
+
 DataPulse/
 ├── data/                     # Données brutes (ex: Sommeil.csv, logs…)
 ├── src/                      # Code source Python
@@ -59,6 +57,8 @@ DataPulse/
 ├── pytest.ini                # Config Pytest
 ├── .flake8                   # (optionnel) Config flake8
 └── README.md                 # Ce fichier
+
+
 🛠️ Prérequis & Installation
 Python 3.10 ou supérieur recommandé
 
