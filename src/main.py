@@ -1,72 +1,187 @@
+import argparse
+import logging
+from datetime import datetime
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
+
+import matplotlib.pyplot as plt
 import pandas as pd
-from datetime import timedelta
+import seaborn as sns
 from dateutil import parser
 from pandas import Timestamp
-import logging
-from logging.handlers import RotatingFileHandler
-import matplotlib.pyplot as plt 
-from datetime import datetime
-import seaborn as sns
-import argparse
-import os
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
 
-from reportlab.pdfgen import canvas 
-
-
-
-BASE_DIR        = Path(__file__).resolve().parent.parent
-DATA_DIR        = BASE_DIR / "data"
+BASE_DIR = Path(__file__).resolve().parent.parent
+DATA_DIR = BASE_DIR / "data"
 SLEEP_DATA_FILE = DATA_DIR / "in" / "Sommeil.csv"
-REPORT_DATA_FILE_PDF = DATA_DIR /"out" / "DataPulse_Sleep_Report.pdf"
-REPORT_DATA_FILE_TXT = DATA_DIR /"out" / "DataPulse_Sleep_Report.txt"
+REPORT_DATA_FILE_PDF = DATA_DIR / "out" / "DataPulse_Sleep_Report.pdf"
+REPORT_DATA_FILE_TXT = DATA_DIR / "out" / "DataPulse_Sleep_Report.txt"
 IMG_DIR = Path(__file__).resolve().parent.parent / "data" / "out"
 IMG_DIST = IMG_DIR / "distribution_duree_sommeil.png"
 IMG_EVOL = IMG_DIR / "evolution_duree_sommeil.png"
 IMG_COUCH = IMG_DIR / "sommeil_heure_coucher.png"
+COLS_REQ_STATS = [
+    "date",
+    "coucher",
+    "lever",
+    "qualite",
+    "raw_coucher",
+    "raw_lever",
+    "only_coucher",
+    "only_lever",
+    "time_lever",
+    "duree",
+    "heures",
+    "minutes",
+    "weekend",
+]
 
-COLS_REQ_STATS = ['date','coucher','lever','qualite','raw_coucher','raw_lever','only_coucher','only_lever','time_lever','duree','heures','minutes','weekend']
+
+def configure_logging(log_path="data_pulse_log.log"):
+    """Configure un logger global avec fichier rotatif et sortie console.
+    Parameters
+    ----------
+    log_path : str
+        Chemin du fichier de log.
+    """
+    root = logging.getLogger()
+
+    # Suppression des anciens handlers
+    for handler in root.handlers[:]:
+        root.removeHandler(handler)
+
+    log_formatter = logging.Formatter(
+        "%(asctime)s %(levelname)s: %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
+    )
+
+    # Handler pour fichier rotatif
+    try:
+        fh = RotatingFileHandler(
+            log_path,
+            maxBytes=5_000_000,
+            backupCount=5,
+            mode="w",
+            encoding="utf-8",
+        )
+        fh.setLevel(logging.DEBUG)
+        fh.setFormatter(log_formatter)
+        root.addHandler(fh)
+    except PermissionError as e:
+        logger.error("Pas de droit d'écriture sur le log : %s", e)
+
+    # Handler pour sortie console
+    ch = logging.StreamHandler()
+    ch.setLevel(logging.INFO)
+    ch.setFormatter(log_formatter)
+    root.addHandler(ch)
+    root.setLevel(logging.DEBUG)
+
+
+configure_logging(DATA_DIR / "mon_script.log")
+logger = logging.getLogger(__name__)
+
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Analyse de sommeil avec DataPulse")
-    parser.add_argument("--file", type=str, default=str(SLEEP_DATA_FILE), help="Chemin vers le fichier CSV d'entrée")
-    parser.add_argument("--format", choices=["txt", "pdf", "both"], default="both", help="Format de sortie du rapport")
-    parser.add_argument("--viz", action="store_true", help="Afficher et sauvegarder les visualisations")
+    """
+    Analyse et retourne les arguments de la ligne de commande.
+
+    Cette fonction configure et utilise argparse pour permettre à l'utilisateur
+    de spécifier des options lors de l'exécution du script, telles que
+    le fichier d'entrée, le format de sortie du rapport, et si les
+    visualisations doivent être affichées et sauvegardées.
+
+    Returns
+    -------
+    argparse.Namespace
+        Un objet contenant les arguments parsés. Les arguments sont accessibles
+        comme des attributs de cet objet (par exemple, `args.file`,
+                                          `args.format`,`args.viz`).
+        - file (str): Chemin vers le fichier CSV d'entrée.
+                      Par défaut : la valeur de la constante SLEEP_DATA_FILE.
+        - format (str): Format de sortie du rapport. Choix possibles : "txt",
+        "pdf", "both".
+                        Par défaut : "both".
+        - viz (bool): Si True, affiche et sauvegarde les visualisations.
+                      Par défaut : False (l'action "store_true" met à True
+                                          si l'option est présente).
+    """
+    parser = argparse.ArgumentParser(description="Analyse  sommeil DataPulse")
+    parser.add_argument(
+        "--file",
+        type=str,
+        default=str(
+            SLEEP_DATA_FILE
+        ),  # s'assurer que SLEEP_DATA_FILE est un str ou Path
+        help="Chemin vers le fichier CSV d'entrée des données de sommeil.",
+    )
+    parser.add_argument(
+        "--format",
+        choices=["txt", "pdf", "both"],
+        default="both",
+        help="Format de sortie du rapport ('txt', 'pdf', ou 'both').",
+    )
+    parser.add_argument(
+        "--viz",  # L'argumente est True si --viz est présent, False sinon
+        action="store_true",
+        help="Afficher et sauvegarder les visualisations graphiques.",
+    )
     return parser.parse_args()
 
-def traduire_colonne_date_en_francais(serie_datetime: pd.Series, format_str='%A %d %B %Y') -> pd.Series:
-    """Traduit une série de dates datetime en format français, sans apply (vectorisé).
 
+def formater_serie_dates_fr(serie_dt: pd.Series, format_str="%A %d %B %Y"):
+    """Traduit une série de dates datetime en format français
     Parameters
     ----------
     serie_datetime : pd.Series
         Colonne de type datetime.
     format_str : str
         Format de date à appliquer avant traduction.
-
     Returns
     -------
     pd.Series
         Chaîne de dates traduites en français.
     """
     jours = {
-        "Monday": "Lundi", "Tuesday": "Mardi", "Wednesday": "Mercredi",
-        "Thursday": "Jeudi", "Friday": "Vendredi", "Saturday": "Samedi", "Sunday": "Dimanche"
+        "Monday": "Lundi",
+        "Tuesday": "Mardi",
+        "Wednesday": "Mercredi",
+        "Thursday": "Jeudi",
+        "Friday": "Vendredi",
+        "Saturday": "Samedi",
+        "Sunday": "Dimanche",
     }
 
     mois = {
-        "January": "Janvier", "February": "Février", "March": "Mars", "April": "Avril",
-        "May": "Mai", "June": "Juin", "July": "Juillet", "August": "Août",
-        "September": "Septembre", "October": "Octobre", "November": "Novembre", "December": "Décembre"
+        "January": "Janvier",
+        "February": "Février",
+        "March": "Mars",
+        "April": "Avril",
+        "May": "Mai",
+        "June": "Juin",
+        "July": "Juillet",
+        "August": "Août",
+        "September": "Septembre",
+        "October": "Octobre",
+        "November": "Novembre",
+        "December": "Décembre",
     }
-
-    dates_str = serie_datetime.dt.strftime(format_str)
-    dates_str = dates_str.replace(jours, regex=True)
-    dates_str = dates_str.replace(mois, regex=True)
-
+    try:
+        dates_str = serie_dt.dt.strftime(format_str)
+        dates_str = dates_str.replace(jours, regex=True)
+        dates_str = dates_str.replace(mois, regex=True)
+        logger.info("[FORMAT_FR] Formatage des dates  effectué avec succès")
+    except Exception as e:
+        logger.warning(
+            "[FORMAT_FR] Erreur lors du formatage des dates en français : %s",
+            e,
+        )
     return dates_str
-def traduire_date_en_francais(texte: str) -> str:
-    """Traduit les jours et mois anglais vers le français dans une chaîne de date.
+
+
+def traduire_texte_date_en_francais(texte: str):
+    """
+    Traduit les jours et mois anglais vers le français dans une chaîne de date.
 
     Parameters
     ----------
@@ -78,93 +193,192 @@ def traduire_date_en_francais(texte: str) -> str:
     str
         Chaîne avec les jours et mois traduits en français.
     """
+    if not isinstance(texte, str):
+        logger.warning(
+            "[TRAD_DATE] Entrée non valide, texte attendu mais reçu : %s",
+            type(texte),
+        )
+        return texte  # ou raise TypeError si tu veux l'interrompre
+
     jours = {
-        "Monday": "Lundi", "Tuesday": "Mardi", "Wednesday": "Mercredi",
-        "Thursday": "Jeudi", "Friday": "Vendredi", "Saturday": "Samedi", "Sunday": "Dimanche"
+        "Monday": "Lundi",
+        "Tuesday": "Mardi",
+        "Wednesday": "Mercredi",
+        "Thursday": "Jeudi",
+        "Friday": "Vendredi",
+        "Saturday": "Samedi",
+        "Sunday": "Dimanche",
     }
 
     mois = {
-        "January": "Janvier", "February": "Février", "March": "Mars", "April": "Avril",
-        "May": "Mai", "June": "Juin", "July": "Juillet", "August": "Août",
-        "September": "Septembre", "October": "Octobre", "November": "Novembre", "December": "Décembre"
+        "January": "Janvier",
+        "February": "Février",
+        "March": "Mars",
+        "April": "Avril",
+        "May": "Mai",
+        "June": "Juin",
+        "July": "Juillet",
+        "August": "Août",
+        "September": "Septembre",
+        "October": "Octobre",
+        "November": "Novembre",
+        "December": "Décembre",
     }
 
     for en, fr in jours.items():
         texte = texte.replace(en, fr)
     for en, fr in mois.items():
         texte = texte.replace(en, fr)
+
+    logger.info("[TRAD_DATE] Traduction effectuée : %s", texte)
     return texte
 
-def horodater (file_param) : 
-    """Écrit dans un fichier texte les données du rapport.
+
+def horodater(file_param: str):
+    """
+    Génère un nom de fichier horodaté basé sur un fichier fourni.
 
     Parameters
     ----------
     file_param : str
-        Nom et emplacement du fichier texte à horodater.
-     Returns
-     -------
-     matplotlib.axes.Axes
-         Nom et emplacement du fichier horodaté.
+        Nom et chemin du fichier de base (ex: "rapport.txt").
+
+    Returns
+    -------
+    str
+        Nom du fichier avec horodatage (ex: "rapport_20250516_1957.txt").
     """
-    return (str(file_param).split('.')[0] + '_' + datetime.now().strftime("%Y%m%d%H%M") + '.' + str(file_param).split('.')[1] )
-    
-     
+    try:
+        path = Path(file_param)
+        horodatage = datetime.now().strftime("%Y%m%d_%H%M")
+        nouveau_nom = f"{path.stem}_{horodatage}{path.suffix}"
+        nouveau_chemin = path.with_name(nouveau_nom)
+        logger.info("[HOROD] Fichier horodaté généré : %s", nouveau_chemin)
+        return str(nouveau_chemin)  # Retourne str pour compatibilité/docstring
+    except Exception as e:
+        logger.warning(
+            "[HOROD] Erreur lors de la génération du fichier horodaté : %s",
+            e,
+        )
+        return file_param  # En cas d'erreur, on retourne le nom original
 
-def ecrire_rapport_pdf(file,texte,marge_gauche=50,marge_haut=800,police='Helvetica', taille_police=8,interligne=10) : 
-   """Écrit un rapport PDF avec texte et images, en gérant les erreurs de chargement d'image."""
-   c = canvas.Canvas(horodater(file))
-   c.setFont(police, taille_police)
 
-   for ligne in texte.split('\n'):
-        c.drawString(marge_gauche, marge_haut, ligne)
-        marge_haut -= interligne
+def ecrire_rapport_pdf(
+    fichier_pdf: str | Path,
+    texte: str,
+    marge_gauche: int = 50,
+    marge_haut: int = 800,
+    police: str = "Helvetica",
+    taille_police: int = 8,
+    interligne: int = 10,
+):
+    """
+    Génère un rapport PDF contenant un texte multi-ligne et, le cas échéant,
+    jusqu’à trois images empilées.
 
-    # Images (chacune protégée)
-   images = [
-        (IMG_DIST, 420),
-        (IMG_EVOL, 220),
-        (IMG_COUCH, 10)
+    Parameters
+    ----------
+    fichier_pdf : str | Path
+        Nom (ou chemin) cible du PDF *avant* horodatage.
+    texte : str
+        Contenu textuel (plusieurs lignes séparées par '\n').
+    marge_gauche, marge_haut : int
+        Coordonnées initiales en points (72 pt = 2,54 cm).
+    police : str
+        Police ReportLab (par ex. 'Helvetica', 'Times-Roman'…).
+    taille_police : int
+        Corps de la police.
+    interligne : int
+        Pas vertical entre deux lignes de texte, en points.
+    images : list[(Path, y)]
+        Liste (chemin, ordonnée) pour chaque image.
+        Si None, on prend les constantes globales IMG_DIST/EVOL/COUCH.
+
+    Returns
+    -------
+    Path
+        Chemin complet du PDF horodaté généré.
+    """
+    # ------------------------------------------------------------------ #
+    # 0. Préparation des images par défaut si paramètre non fourni
+    # ------------------------------------------------------------------ #
+
+    images = [
+        (Path(IMG_DIST), 420),
+        (Path(IMG_EVOL), 220),
+        (Path(IMG_COUCH), 10),
     ]
 
-   for img_path, y in images:
-        try:
-            if Path(IMG_DIST).exists():
-                c.drawImage(str(IMG_DIST), x=50, y=420, width=500, height=200)
-            if Path(IMG_EVOL).exists():
-                c.drawImage(str(IMG_EVOL), x=50, y=220, width=500, height=200)
-            if Path(IMG_COUCH).exists():
-                c.drawImage(str(IMG_COUCH), x=50, y=10, width=500, height=200)
-        except Exception as e:
-            logger.warning("Image introuvable ou non lisible (%s) : %s", img_path, e)
+    # ------------------------------------------------------------------ #
+    # 1. Création du PDF
+    # ------------------------------------------------------------------ #
+    output_path: Path = horodater(fichier_pdf)
+    c = canvas.Canvas(str(output_path), pagesize=A4)
+    c.setFont(police, taille_police)
 
-   c.save()
-   # Supprimer les images
-   for img_path, _ in images:
+    # ------------------------------------------------------------------ #
+    # 2. Écriture du texte ligne par ligne
+    # ------------------------------------------------------------------ #
+    y = marge_haut
+    for ligne in texte.splitlines():
+        c.drawString(marge_gauche, y, ligne)
+        y -= interligne
+        if y < 50:  # rudimentaire : nouvelle page si bas
+            c.showPage()
+            c.setFont(police, taille_police)
+            y = marge_haut
+
+    # ------------------------------------------------------------------ #
+    # 3. Insertion d’images (protégée)
+    # ------------------------------------------------------------------ #
+    for img, y_img in images:
+        try:
+            if img.exists():
+                c.drawImage(str(img), x=50, y=y_img, width=500, height=200)
+                logger.debug("[EXPORT] Image insérée : %s", img)
+            else:
+                logger.warning("[EXPORT] Image manquante : %s", img)
+        except Exception as e:
+            logger.warning("[EXPORT] Problème à lʼinsertion de %s: %s", img, e)
+
+    c.save()
+    logger.info("[EXPORT] PDF généré avec succès : %s", output_path)
+
+    # ------------------------------------------------------------------ #
+    # 4. Nettoyage optionnel des fichiers image
+    # ------------------------------------------------------------------ #
+    for img_path, _ in images:
         try:
             if img_path.exists():
-                os.remove(img_path)
-                logger.info(f"Image supprimée : {img_path}")
+                img_path.unlink()
+                logger.info("[EXPORT] Image temporaire supprimée : %s", img)
         except Exception as e:
-            logger.warning(f"Erreur lors de la suppression de {img_path} : {e}")
+            logger.warning("[EXPORT] Échec de suppression de %s : %s", img, e)
 
-def ecrire_rapport_txt(file: str, chaine: str):
+    return output_path
+
+
+def ecrire_rapport_txt(file: str, contenu_rapport: str):
     """Écrit dans un fichier texte les données du rapport.
 
     Parameters
     ----------
     file : str
         Nom et emplacement du fichier texte à créer.
-    chaine : str
+    contenu_rapport  : str
         Contenu à écrire dans le fichier.
     """
     with open(horodater(file), "w", encoding="utf-8") as f:
-        f.write(chaine)
+        f.write(contenu_rapport)
 
-def visualiser_coucher_vs_duree(df: pd.DataFrame, *, avec_regression: bool = True, ax=None):
+
+def visualiser_coucher_vs_duree(
+    df: pd.DataFrame, *, avec_regression: bool = True, ax=None
+):
     """Visualise la durée du sommeil en fonction de l'heure de coucher.
 
-    Affiche un nuage de points de la durée du sommeil contre l'heure de coucher, éventuellement
+    Affiche un nuage de points de la durée du sommeil contre l'heure de coucher
+    , éventuellement
     accompagné d'une droite de régression linéaire.
 
     Parameters
@@ -172,9 +386,11 @@ def visualiser_coucher_vs_duree(df: pd.DataFrame, *, avec_regression: bool = Tru
     df : pd.DataFrame
         DataFrame contenant les colonnes 'mins_coucher' et 'duree'.
     avec_regression : bool, optional
-        Si True, ajoute une droite de régression linéaire au graphique. Par défaut à True.
+        Si True, ajoute une droite de régression linéaire au graphique.
+        Par défaut à True.
     ax : matplotlib.axes.Axes, optional
-        Objet Axes existant pour tracer le graphique. Si None, un nouveau graphique est créé.
+        Objet Axes existant pour tracer le graphique. Si None,
+        un nouveau graphique est créé.
 
     Returns
     -------
@@ -190,60 +406,64 @@ def visualiser_coucher_vs_duree(df: pd.DataFrame, *, avec_regression: bool = Tru
     >>> visualiser_coucher_vs_duree(data)
     """
     # Vérifier et nettoyer les données nécessaires
-    data_plot = df[['mins_coucher', 'duree']].dropna()
-    if data_plot.empty:
-        logger.info("Données insuffisantes pour visualiser l'heure de coucher vs durée.")
+    data = df[["mins_coucher", "duree"]].dropna()
+    if data.empty:
+        logger.info("[VISUAL] Données insuff. pr visualiser heure de coucher")
         return
 
-    # Création des Axes si aucun n'est fourni
+    # Création des axes si aucun n'est fourni
     if ax is None:
         fig, ax = plt.subplots(figsize=(10, 8))
 
     # Tracé du nuage de points
     sns.scatterplot(
-        data=data_plot,
-        x='mins_coucher',
-        y='duree',
-        alpha=0.6,
-        edgecolor="w",
-        ax=ax
+        data=data,
+        x="mins_coucher",
+        y="duree",
+        alpha=0.6,  # Transparence des points
+        edgecolor="w",  # Couleur du contour des points
+        ax=ax,  # Axes sur lesquels dessiner
     )
 
     # Ajout d'une droite de régression linéaire
     if avec_regression:
         sns.regplot(
-            data=data_plot,
-            x='mins_coucher',
-            y='duree',
+            data=data,
+            x="mins_coucher",
+            y="duree",
             scatter=False,
             ax=ax,
-            line_kws={'linewidth': 2, 'color': 'red'}
+            line_kws={
+                "linewidth": 2,
+                "color": "red",
+            },  # Style ligne régression
+            # 'linewidth': épaisseur
         )
 
     # Personnalisation des axes et du titre
     ax.set(
         title="Durée du sommeil en fonction de l'heure de coucher",
         xlabel="Heure de coucher (minutes depuis minuit)",
-        ylabel="Durée du sommeil (minutes)"
+        ylabel="Durée du sommeil (minutes)",
+        grid=True,  # Ajout d'une grille
     )
 
-    # Ajout d'une grille
-    ax.grid(True)
+    plt.tight_layout()  # Ajuste auto. les élémts pr éviter les superpositions
 
-    plt.tight_layout()
-
-    # Affichage
+    # sauvegarde
     try:
         plt.savefig(IMG_COUCH)
         plt.close()
-        logger.info("Visualisation durée du sommeil en fonction de l'heure de coucher créee avec succès.")
+        logger.info(
+            "[VISUAL] Visualisation durée du sommeil en fonction de "
+            + "l'heure de coucher créee avec succès."
+        )
     except Exception as e:
-        logger.error("Échec de l'affichage : %s", e)
+        logger.error("[VISUAL] Échec de l'affichage : %s", e)
 
     return ax
 
-     
-    
+
 def visualiser_evolution_duree(
     df: pd.DataFrame, *, window: int = 7, ax: plt.Axes = None
 ):
@@ -273,70 +493,77 @@ def visualiser_evolution_duree(
     >>> visualiser_evolution_duree(df)
 
     """
-    df_ordonne = (
-        df[['date', 'duree']]
-        .dropna()
-        .sort_values(by='date')
-        .reset_index(drop=True)
-    )
+    # Vérifier et nettoyer les données nécessaires
+    data = df[["date", "duree"]].dropna()
+    data = data.datasort_values(by="date")
+    data = data.reset_index(drop=True)
 
-    if df_ordonne.empty:
-        logger.info("Aucune donnée valide pour visualiser l'évolution.")
+    if data.empty:
+        logger.info("[VISUAL] Aucune donnée valide pour  évolution.")
         return
-
+    # Création des Axes si aucun n'est fourni
     if ax is None:
         fig, ax = plt.subplots(figsize=(12, 8))
 
+    # Tracé  courbe
     ax.plot(
-        df_ordonne['date'],
-        df_ordonne['duree'],
-        marker='o',
-        linestyle='-',
+        data["date"],
+        data["duree"],
+        marker="o",
+        linestyle="-",
         alpha=0.4,
-        label='Durée du sommeil',
+        label="Durée du sommeil",
     )
 
     moyenne_mobile = (
-        df_ordonne.set_index('date')['duree']
-        .rolling(window=window, center=True, min_periods=window // 2)
+        data.set_index("date")["duree"]  # Index par date pr rolling() temporel
+        .rolling(
+            window=window, center=True, min_periods=window // 2
+        )  # Fenêtre glissante
         .mean()
     )
 
+    # Tracé  nuage de points
     moyenne_mobile.plot(
         ax=ax,
         linewidth=2,
-        label=f"Moyenne mobile ({window} j)",
-        color='tab:blue',
+        label=f"Moyenne mobile ({window} j)",  # Nom pour la légende
+        color="tab:blue",
     )
 
-    ax.set_title("Évolution de la durée de sommeil", fontsize=16)
-    ax.set_xlabel("Date", fontsize=14)
-    ax.set_ylabel("Durée (minutes)", fontsize=14)
-    ax.grid(True, linestyle='--', alpha=0.6)
-    ax.legend()
+    # Personnalisation de l'axe et du titre
+    ax.set(
+        title="Évolution de la durée de sommeil",
+        xlabel="Date",
+        ylabel="Durée (minutes)",
+        grid=True,
+        linestyle="--",
+        alpha=0.6,
+    )
+    ax.legend()  # Afficher la légende pour distinguer les deux lignes
 
-    plt.setp(ax.get_xticklabels(), rotation=45, ha='right')
+    plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
     plt.tight_layout()
 
+    # Affichage
     try:
         plt.savefig(IMG_EVOL)
         plt.close()
+        logger.info("[VISUAL] Évolution durée de sommeil créee avec succès.")
     except Exception as e:
-        logger.error("Erreur lors de la visualisation: %s", e)
-
-    logger.info("Visualisation : Évolution de la durée de sommeil créée avec succès.")
+        logger.error("[VISUAL] Erreur lors de la visualisation: %s", e)
 
     return ax
 
-       
-    
+
 def visualiser_distribution_duree(df: pd.DataFrame):
     """Affiche la distribution de la durée du sommeil sous forme d'histogramme.
 
     Parameters
     ----------
     df : pd.DataFrame
-        DataFrame contenant une colonne 'duree' représentant les durées de sommeil.
+        DataFrame contenant une colonne 'duree' représentant les durées de
+        sommeil.
 
     Returns
     -------
@@ -344,109 +571,67 @@ def visualiser_distribution_duree(df: pd.DataFrame):
 
     Examples
     --------
-    >>> df = pd.DataFrame({'duree': [420, 400, 380, None, 390, 415, 430, 410, 400, 395]})
+    >>> df = pd.DataFrame({'duree':
+                          [420, 400, 380, None, 390, 415, 430, 410, 400, 395]})
     >>> visualiser_distribution_duree(df)
     """
-    duree_valide = df['duree'].dropna()
+    # Vérifier et nettoyer les données nécessaires
+    data = df["duree"].dropna()
 
-    if duree_valide.empty:
+    if data.empty:
         logger.info("Aucune donnée valide pour générer la visualisation.")
         return
-
+    # Personnalisation
     plt.figure(figsize=(12, 8))
-    sns.histplot(duree_valide, kde=True, bins=10, color='skyblue', edgecolor='black')
+    sns.histplot(data, kde=True, bins=10, color="skyblue", edgecolor="black")
 
-    plt.title('Distribution de la durée du sommeil', fontsize=16)
-    plt.xlabel('Durée du sommeil (minutes)', fontsize=14)
-    plt.ylabel('Fréquence (nombre de nuits)', fontsize=14)
-    plt.grid(True, linestyle='--', alpha=0.6)
+    plt.set(
+        title="Distribution de la durée du sommeil",
+        xlabel="Durée du sommeil (minutes)",
+        ylabel="Fréquence (nombre de nuits)",
+        grid=True,
+    )
+    # Pas de légende nécessaire ici car une seule distribution est tracée
 
+    # sauvegarde
     try:
         plt.savefig(IMG_DIST)
-        plt.close() 
+        plt.close()
     except Exception as e:
         logger.error("Erreur lors de la visualisation : %s", e)
 
-    logger.info("Visualisation Distribution de la durée du sommeil créée avec succès.")
-    
-      
+    logger.info("[VISUAL] Distribution durée du sommeil créée avec succès.")
 
-
-def configure_logging(log_path="mon_script.log"):
-    """Configure un logger global avec fichier rotatif et sortie console.
-
-    Parameters
-    ----------
-    log_path : str
-        Chemin du fichier de log.
-    """
-    root = logging.getLogger()
-
-    # Suppression des anciens handlers
-    for handler in root.handlers[:]:
-        root.removeHandler(handler)
-
-    # Handler pour fichier rotatif
-    try:
-        fh = RotatingFileHandler(
-            log_path,
-            maxBytes=5_000_000,
-            backupCount=5,
-            mode="w",
-            encoding="utf-8-sig"
-        )
-        fh.setLevel(logging.DEBUG)
-        fh.setFormatter(logging.Formatter(
-            "%(asctime)s %(levelname)s: %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S"
-        ))
-        root.addHandler(fh)
-    except PermissionError as e:
-        logger.error("Pas de droit d'écriture sur le log : %s", e)
-
-    # Handler pour sortie console
-    ch = logging.StreamHandler()
-    ch.setLevel(logging.INFO)
-    ch.setFormatter(logging.Formatter(
-        "%(asctime)s %(levelname)s: %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S"
-    ))
-    root.addHandler(ch)
-
-    root.setLevel(logging.DEBUG)
-
-configure_logging(DATA_DIR/"mon_script.log")
-logger = logging.getLogger(__name__)
 
 def controle_validite(row: pd.Series) -> str:
-    """Contrôle la validité des données d'une ligne de DataFrame.
-
-    Parameters
-    ----------
-    row : pd.Series
-        Ligne d'un DataFrame contenant les colonnes "Durée", "Heure de coucher" et "Heure de lever".
-
-    Returns
-    -------
-    str
-        Chaîne décrivant la validité des données.
     """
-    invalidite = "valide"
+    Contrôle la validité d'une ligne de données sommeil.
 
-    if row["Durée"] == '--' or pd.isna(row["Durée"]):
-        invalidite = "-Durée manquante"
-    if row["Heure de coucher"] == '--' or pd.isna(row["Heure de coucher"]):
-        invalidite += "-Heure de coucher manquante"
-    if row["Heure de lever"] == '--' or pd.isna(row["Heure de lever"]):
-        invalidite += "-Heure de lever manquante"
+    Retourne "valide" si tout est ok,
+    sinon une chaîne listant les champs manquants.
+    """
+    erreurs = []
 
-    return invalidite
+    if row.get("Durée", "--") == "--" or pd.isna(row.get("Durée")):
+        erreurs.append("Durée manquante")
+    if row.get("Heure de coucher", "--") == "--" or pd.isna(row.get("Heure de coucher")):
+        erreurs.append("Heure de coucher manquante")
+    if row.get("Heure de lever", "--") == "--" or pd.isna(row.get("Heure de lever")):
+        erreurs.append("Heure de lever manquante")
+
+    if erreurs:
+        message = "; ".join(erreurs)
+        logger.debug("[PREPARE] Ligne invalide détectée : %s", message)
+        return message
+    else:
+        return "valide"
+
 
 
 def lire_fichier_pandas(
     chemin_fichier: str,
     encodages=("utf-8", "latin-1", "cp1252"),
-    separateurs=(";", ",", "\t", "|", ":")
+    separateurs=(";", ",", "\t", "|", ":"),
 ):
     """Lit un fichier tabulaire en testant plusieurs encodages et séparateurs.
 
@@ -461,53 +646,69 @@ def lire_fichier_pandas(
 
     Returns
     -------
-    dict or None
-        Dictionnaire avec les clés 'dataframe', 'encodage_utilisé' et 'séparateur_utilisé', ou None en cas d'échec.
+    dict ou None
+        Dictionnaire avec les clés 'dataframe', 'encodage_utilisé' et
+        'séparateur_utilisé', ou None en cas d'échec.
     """
     for encodage in encodages:
-        for sep in separateurs:
+        for s in separateurs:
             try:
-                
-                if hasattr(chemin_fichier, "seek"):
-                    chemin_fichier.seek(0)
-                df = pd.read_csv(chemin_fichier, encoding=encodage, sep=sep)
 
-                if not df.empty and len(df.columns) > 1:
+                if hasattr(
+                    chemin_fichier, "seek"
+                ):  # Si chemin_fichier est un objet fichier en mémoire
+                    chemin_fichier.seek(0)  # On "rembobine" au début du flux
+                df = pd.read_csv(chemin_fichier, encoding=encodage, sep=s)
+
+                if (
+                    not df.empty and len(df.columns) > 1
+                ):  # DataFrame non vide et plus d'une colonne
                     logger.info("Fichier %s lu avec succès", chemin_fichier)
                     return {
                         "dataframe": df,
                         "encodage_utilisé": encodage,
-                        "séparateur_utilisé": sep
+                        "séparateur_utilisé": s,
                     }
 
             except UnicodeDecodeError as e:
-                logger.warning("Erreur d'encodage avec %s : %s", encodage, e)
+                logger.warning(
+                    "[PARSE_CSV] Erreur d'encodage avec %s : %s", encodage, e
+                )
             except pd.errors.ParserError as e:
-                logger.warning("Erreur de séparateur avec %s : %s", sep, e)
+                logger.warning("[PARSE_CSV] Err séparateur avec %s : %s", s, e)
             except Exception as e:
-                logger.warning("Erreur inattendue avec %s : %s", sep, e)
+                logger.warning("[PARSE_CSV] Err inattendue avec %s : %s", s, e)
 
-    logger.critical("Échec : Impossible de lire %s avec les encodages et séparateurs fournis.", chemin_fichier)
+    logger.critical(
+        "[PARSE_CSV] Échec : Impossible de lire %s avec les encodages et "
+        + "séparateurs fournis.",
+        chemin_fichier,
+    )
     return None
 
 
 def mins_to_hhmm(total_minutes):
     """
-   Convertit un nombre de minutes depuis minuit en chaîne 'HH:MM'.
+    Convertit un nombre de minutes depuis minuit en chaîne 'HH:MM'.
 
-   Parameters
-   ----------
-   total_minutes : float or int or NaN
-       Nombre de minutes écoulées depuis 00:00. Peut être fractionnaire ou NaN.
+    Parameters
+    ----------
+    total_minutes : float | int | NaN
+        Minutes écoulées depuis 00:00. Peut être fractionnaire ou NaN.
 
-   Returns
-   -------
-   str
-       Chaîne formatée 'HH:MM' ou 'N/A' si la valeur est manquante.
-   """
-   
+    Returns
+    -------
+    str
+        'HH:MM' ou 'N/A' si la valeur est manquante.
+    """
+    # Valeur manquante → N/A
     if pd.isna(total_minutes):
         return "N/A"
+
+    # Valeur négative ou absurde → log en DEBUG, puis correction modulo 24 h
+    if total_minutes < 0:
+        logger.debug("[UTIL] mins_to_hhmm : minutes nég (%s)", total_minutes)
+
     total_minutes = int(total_minutes)
     hours = (total_minutes // 60) % 24
     minutes = total_minutes % 60
@@ -515,334 +716,381 @@ def mins_to_hhmm(total_minutes):
 
 
 def parse_time_ts(ts):
-    """Convertit une chaîne horaire en objet datetime.time grâce à dateutil.
+    """
+    Convertit une chaîne horaire en objet datetime.time grâce à dateutil.
 
     Parameters
     ----------
-    ts : str or float or pd.NaT
-        Chaîne représentant une heure (ex. "03:56 AM") ou une valeur manquante.
+    ts : str | float | pd.NaT
+        Chaîne représentant une heure (ex. "03:56 AM") ou valeur manquante.
 
     Returns
     -------
-    datetime.time or None
-        L'heure extraite, ou None en cas d’erreur ou de valeur manquante.
+    datetime.time | None
+        Heure extraite, ou None en cas d’erreur / valeur manquante.
     """
-    if pd.isna(ts):
+    if pd.isna(ts):  # Valeur absurde
         return None
 
     try:
         return parser.parse(ts).time()
     except Exception as e:
-        logger.debug("Impossible de parser %r en time : %s", ts, e)
+        logger.debug("[UTIL] parse_time_ts — imposs. de parser %r : %s", ts, e)
         return None
 
-    
-def combine(row: pd.Series, time_col: str) -> pd.Timestamp:
-    """Construit un Timestamp à partir d'une date et d'une heure dans une ligne.
+
+def combine(row: pd.Series, time_col: str):
+    """
+    Construit un Timestamp à partir d'une date et d'une heure.
 
     Parameters
     ----------
     row : pd.Series
-        Ligne contenant la date dans 'date' et l'heure dans la colonne `time_col`.
+        Ligne contenant la date ('date') et l'heure dans `time_col`.
     time_col : str
-        Nom de la colonne contenant l'heure (objet datetime.time).
+        Nom de la colonne contenant l'heure (datetime.time).
 
     Returns
     -------
-    pd.Timestamp or pd.NaT
+    pd.Timestamp | pd.NaT
         Timestamp combinant date et heure, ou pd.NaT si l'heure est absente.
     """
+    # Récupère l'objet datetime.time (ou None) de la cln spécifiée
     t = row[time_col]
-    if t is None:
-        logger.debug("Aucune heure détectée dans '%s' pour la date %s", time_col, row.get('date'))
+    if t is None:  # Vérifie si l'heure est absente
+        logger.debug(
+            "[UTIL] combine — heure manquante dans '%s' pour la date %s",
+            time_col,
+            row.get("date"),
+        )
         return pd.NaT
 
+    # on construit l'objet Timestamp
     return Timestamp(
-        year=row['date'].year,
-        month=row['date'].month,
-        day=row['date'].day,
+        year=row["date"].year,
+        month=row["date"].month,
+        day=row["date"].day,
         hour=t.hour,
-        minute=t.minute
+        minute=t.minute,
     )
 
-def calculer_stats_globales(df: pd.DataFrame) -> tuple:
-    """Calcule les statistiques globales de durée de sommeil.
 
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Doit contenir une colonne 'duree' (en minutes).
+def calculer_stats_globales(df: pd.DataFrame):
+    """
+    Calcule les statistiques globales de durée de sommeil.
 
     Returns
     -------
-    tuple
-        (totales, normales, courtes, longues, moyenne, mediane, minimale, maximale, ecart_type)
+    tuple :
+        (totales, normales, courtes, longues,
+         moyenne, mediane, minimale, maximale, ecart_type)
     """
-    logger.info("Début du calcul des stats globales sur %d lignes", len(df))
-
-    df_clean = df[df['duree'].notna()]
+    logger.info("[STATS_GLOBAL] Début sur %d lignes", len(df))
+    df_clean = df[df["duree"].notna()]
 
     try:
         if df_clean.empty:
-            logger.warning("Aucune donnée valide pour le calcul des statistiques")
+            logger.warning("[STATS_GLOBAL] Aucune donnée valide")
             return (0, 0, 0, 0, 0, 0, 0, 0, 0)
 
         totales = len(df_clean)
-        normales = df_clean[(df_clean['duree'] >= 420) & (df_clean['duree'] <= 540)].shape[0]
-        courtes = df_clean[df_clean['duree'] < 420].shape[0]
-        longues = df_clean[df_clean['duree'] > 540].shape[0]
-        moyenne = df_clean['duree'].mean()
-        mediane = df_clean['duree'].median()
-        minimale = df_clean['duree'].min()
-        maximale = df_clean['duree'].max()
-        ecart_type = df_clean['duree'].std()
+        normales = df_clean[
+            (df_clean["duree"] >= 420) & (df_clean["duree"] <= 540)
+        ].shape[0]
+        courtes = df_clean[df_clean["duree"] < 420].shape[0]
+        longues = df_clean[df_clean["duree"] > 540].shape[0]
+        moyenne = df_clean["duree"].mean()
+        mediane = df_clean["duree"].median()
+        minimale = df_clean["duree"].min()
+        maximale = df_clean["duree"].max()
+        ecart_type = df_clean["duree"].std()
 
-        logger.info("Stats globales — totales: %d, moy: %.1f, médiane: %.1f, min: %.1f, max: %.1f", totales, moyenne, mediane, minimale, maximale)
-
-        return totales, normales, courtes, longues, moyenne, mediane, minimale, maximale, ecart_type
+        logger.info(
+            "[STATS_GLOBAL] totales=%d, moy=%.1f, médiane=%.1f, min=%.1f, "
+            + "max=%.1f",
+            totales,
+            moyenne,
+            mediane,
+            minimale,
+            maximale,
+        )
+        return (
+            totales,
+            normales,
+            courtes,
+            longues,
+            moyenne,
+            mediane,
+            minimale,
+            maximale,
+            ecart_type,
+        )
 
     except Exception as e:
-        logger.exception("Erreur lors du calcul des stats globales : %s", e)
+        logger.exception("[STATS_GLOBAL] Erreur : %s", e)
         return (0, 0, 0, 0, 0.0, 0.0, 0.0, 0.0, 0.0)
 
-def calculer_stats_par_periode(df: pd.DataFrame):
-    """Retourne les moyennes de durée de sommeil pour semaine et week-end.
 
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Doit contenir une colonne 'date' (datetime) et 'duree'.
+def calculer_stats_par_periode(df: pd.DataFrame):
+    """
+    Retourne les moyennes de durée de sommeil pour semaine et week-end.
 
     Returns
     -------
     tuple
         (moyenne_semaine, moyenne_weekend)
     """
-    logger.info("Début du calcul des stats par période")
+    logger.info("[STATS_PERIODE] Début")
 
     try:
-        moyennes = df.groupby(df['date'].dt.weekday >= 5)['duree'].mean()
+        moyennes = df.groupby(df["date"].dt.weekday >= 5)[
+            "duree"
+        ].mean()  # True  => week-end
+        # cree un grp 0 dans le cas ou pas d'entrée True
         moyennes = moyennes.reindex([False, True], fill_value=0)
 
-        logger.info("Stats périodiques — weekend: %.1f, semaine: %.1f", moyennes[True], moyennes[False])
-
+        logger.info(
+            "[STATS_PERIODE] semaine=%.1f, weekend=%.1f",
+            moyennes[False],
+            moyennes[True],
+        )
         return moyennes[False], moyennes[True]
 
     except Exception as e:
-        logger.exception("Erreur lors du calcul des stats par période : %s", e)
+        logger.exception("[STATS_PERIODE] Erreur : %s", e)
         return (0.0, 0.0)
 
-def calculer_heures_medianes(df: pd.DataFrame) -> tuple:
-    """Calcule les heures médianes de coucher et de lever en minutes.
 
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Doit contenir les colonnes 'mins_coucher' et 'mins_lever'.
+def calculer_heures_medianes(df: pd.DataFrame):
+    """
+    Calcule les heures médianes de coucher et de lever (en minutes).
 
     Returns
     -------
     tuple
         (median_coucher, median_lever)
     """
-    logger.info("Début du calcul des heures médianes")
+    logger.info("[STATS_MEDIAN] Début")
 
     try:
-        median_coucher = df['mins_coucher'].dropna().median()
-        median_lever = df['mins_lever'].dropna().median()
+        median_coucher = df["mins_coucher"].dropna().median()
+        median_lever = df["mins_lever"].dropna().median()
 
-        logger.info("Heures médianes calculées — coucher: %d min, lever: %d min", median_coucher, median_lever)
+        logger.info(
+            "[STATS_MEDIAN] coucher=%d min, lever=%d min",
+            median_coucher,
+            median_lever,
+        )
         return median_coucher, median_lever
 
     except Exception as e:
-        logger.exception("Erreur lors du calcul des heures médianes : %s", e)
+        logger.exception("[STATS_MEDIAN] Erreur : %s", e)
         return 0.0, 0.0
-        
 
 
-def creer_rapport(stats_sommeil: tuple, date_min, date_max) -> None:
-    """Affiche un rapport synthétique de sommeil sur la période spécifiée.
-
-    Parameters
-    ----------
-    stats_sommeil : tuple
-        (totales, normales, courtes, longues, moyenne, mediane, minimale,
-         maximale, ecart_type, moy_semaine, moy_weekend, heure_median_coucher, heure_median_lever)
-    date_min : str or pd.Timestamp
-        Date de début de la période.
-    date_max : str or pd.Timestamp
-        Date de fin de la période.
-
-    Returns
-    -------
-    None
+def creer_rapport(stats_sommeil: tuple, date_min, date_max):
     """
-    chaine  = traduire_date_en_francais (f"DataPulse - Rapport Sommeil du {date_min} au {date_max}\n")
-    chaine +=f"\nNombre de nuits analysées   : {stats_sommeil[0]}\n"
-    chaine +=f"  - normales                            : {stats_sommeil[1]}\n"
-    chaine +=f"  - courtes                               : {stats_sommeil[2]}\n"
-    chaine +=f"  - longues                              : {stats_sommeil[3]}\n"
-    chaine +=f"Durée moyenne                     : {stats_sommeil[4]:.0f} min (~{stats_sommeil[4]/60:.1f} h)\n"
-    chaine +=f"Durée médiane(1)                  : {stats_sommeil[5]:.0f} min (~{stats_sommeil[5]/60:.1f} h)\n"
-    chaine +=f"Durée minimale                      : {stats_sommeil[6]:.0f} min (~{stats_sommeil[6]/60:.1f} h)\n"
-    chaine +=f"Durée maximale                     : {stats_sommeil[7]:.0f} min (~{stats_sommeil[7]/60:.1f} h)\n"
-    chaine +=f"Écart-type                               : {stats_sommeil[8]:.0f} min\n"
-    chaine +=f"Durée moyenne en semaine   : {stats_sommeil[9]:.0f} min (~{stats_sommeil[9]/60:.1f} h)\n"
-    chaine +=f"Durée moyenne le week-end  : {stats_sommeil[10]:.0f} min (~{stats_sommeil[10]/60:.1f} h)\n"
-    chaine +=f"Heure médiane de coucher(1) : {mins_to_hhmm(stats_sommeil[11])}\n"
-    chaine +=f"Heure médiane de lever(1)      : {mins_to_hhmm(stats_sommeil[12])}\n"
-    chaine +="\n--------------------------------------------------------------------------------------------------------------\n"
-    chaine +="\n(1) Médiane moins sensible aux valeurs extrêmes"
-    chaine +="\n(2) Écart-type faible → sommeil régulier"
-    return chaine
-
-    
-
-
-def prepare_sleep_df(path: str) -> pd.DataFrame | None:
-    """Charge et prépare un DataFrame de sommeil depuis un fichier CSV.
-
-    Parameters
-    ----------
-    path : str or pathlib.Path
-        Chemin vers le fichier CSV de sommeil.
-
-    Returns
-    -------
-    pd.DataFrame or None
-        Le DataFrame enrichi des colonnes :
-        ['date', 'coucher', 'lever', 'duree', 'heures', 'minutes', …]
+    Génère le texte du rapport synthétique de sommeil pour la période donnée.
     """
+    rapport_txt = traduire_texte_date_en_francais(
+        f"DataPulse - Rapport Sommeil du {date_min} au {date_max}\n"
+    )
+    rapport_txt += f"\nNombre de nuits analysées   : {stats_sommeil[0]}\n"
+    rapport_txt += "  - normales                            :"
+    rapport_txt += f" {stats_sommeil[1]}\n"
+    rapport_txt += "  - courtes                              : "
+    rapport_txt += f"{stats_sommeil[2]}\n"
+    rapport_txt += "  - longues                              : "
+    rapport_txt += f"{stats_sommeil[3]}\n"
+    rapport_txt += (
+        f"Durée médiane(1)                  : "
+        f"{stats_sommeil[5]:.0f} min (~{stats_sommeil[5]/60:.1f} h)\n"
+    )
+    rapport_txt += (
+        f"Durée minimale                      : "
+        f"{stats_sommeil[6]:.0f} min (~{stats_sommeil[6]/60:.1f} h)\n"
+    )
+    rapport_txt += (
+        f"Durée maximale                     : "
+        f"{stats_sommeil[7]:.0f} min (~{stats_sommeil[7]/60:.1f} h)\n"
+    )
+    rapport_txt += "Écart-type                               : "
+    rapport_txt += f"{stats_sommeil[8]:.0f} min\n"
+    rapport_txt += (
+        f"Durée moyenne en semaine   : "
+        f"{stats_sommeil[9]:.0f} min (~{stats_sommeil[9]/60:.1f} h)\n"
+    )
+    rapport_txt += (
+        f"Durée moyenne le week-end  : "
+        f"{stats_sommeil[10]:.0f} min (~{stats_sommeil[10]/60:.1f} h)\n"
+    )
+    rapport_txt += f"Heure médiane coucher(1) : " f"{mins_to_hhmm(stats_sommeil[11])}\n"
+    rapport_txt += (
+        f"Heure médiane lever(1)     : " f"{mins_to_hhmm(stats_sommeil[12])}\n"
+    )
+    rapport_txt += "\n" + "-" * 110 + "\n"
+    rapport_txt += "\n(1) Médiane moins sensible aux valeurs extrêmes"
+    rapport_txt += "\n(2) Écart-type faible → sommeil régulier"
+
+    logger.info("[REPORT] Rapport généré (%d caractères)", len(rapport_txt))
+    return rapport_txt
+
+
+def prepare_sleep_df(path: str | Path):
+    """Charge et prépare un DataFrame de sommeil depuis un CSV."""
     try:
-        logger.info("Début de prepare_sleep_df pour %s", path)
+        logger.info("[PREPARE] Début pour %s", path)
 
-        if hasattr(path, 'read'):  # Cas Streamlit
-            path.seek(0)  # Rewind en cas de plusieurs lectures
+        # --- 1. Lecture -------------------------------------------------
+        if hasattr(path, "read"):  # cas Streamlit / fichier en mémoire
+            path.seek(0)
             resultat = lire_fichier_pandas(path)
         else:
             resultat = lire_fichier_pandas(str(path))
+
         if resultat is None:
-            logger.critical("Abandon de prepare_sleep_df : échec de lecture de %s", path)
-            return None
+            logger.critical("[PREPARE] Abandon : échec de lecture %s", path)
+            return pd.DataFrame()
 
         df = resultat["dataframe"]
-        df.columns = df.columns.str.replace('\u00A0', ' ', regex=False)
+        df.columns = df.columns.str.replace("\u00a0", " ", regex=False)
+        df["qualite"] = df.apply(controle_validite, axis=1).fillna(pd.NA)
 
-        df["qualite"] = df.apply(controle_validite, axis=1)
-        logger.debug("Avant drop/rename : shape=%s, colonnes=%s", df.shape, df.columns.tolist())
-
-        df = (
-            df
-            .drop(columns=['Durée'], errors='ignore')
-            .rename(columns={
-                'Sommeil 4 semaines': 'date',
-                'Heure de coucher': 'coucher',
-                'Heure de lever': 'lever'
-            })
+        logger.debug(
+            "[PREPARE] Avant drop/rename : shape=%s, cols=%s",
+            df.shape,
+            df.columns.tolist(),
         )
-        logger.debug("Après drop/rename  : shape=%s, colonnes=%s", df.shape, df.columns.tolist())
 
-        df['date'] = pd.to_datetime(df['date'], errors='coerce')
-        if df['date'].isna().any():
-            logger.warning("Certaines dates n'ont pas pu être parsées")
-        if df['date'].isna().all():
-            logger.warning("Toutes les dates sont NaT après conversion pour %s", path)
+        # --- 2. Normalisation colonnes ---------------------------------
+        df = df.drop(columns=["Durée"], errors="ignore").rename(
+            columns={
+                "Sommeil 4 semaines": "date",
+                "Heure de coucher": "coucher",
+                "Heure de lever": "lever",
+            }
+        )
+        logger.debug(
+            "[PREPARE] Après drop/rename  : shape=%s, cols=%s",
+            df.shape,
+            df.columns.tolist(),
+        )
 
-        df['raw_coucher'] = df['coucher'].astype(str).replace('--', pd.NA)
-        df['raw_lever'] = df['lever'].astype(str).replace('--', pd.NA)
+        # --- 3. Nettoyage dates ----------------------------------------
+        df["date"] = pd.to_datetime(df["date"], errors="coerce")
+        if df["date"].isna().any():
+            logger.warning("[PREPARE] Certaines dates non parsées")
+        if df["date"].isna().all():
+            logger.warning("[PREPARE] Toutes les dates NaT pour %s", path)
 
-        for col in ['raw_coucher', 'raw_lever']:
+        # --- 4. Nettoyage heures brutes --------------------------------
+        df["raw_coucher"] = df["coucher"].astype(str).replace("--", pd.NA)
+        df["raw_lever"] = df["lever"].astype(str).replace("--", pd.NA)
+
+        for col in ["raw_coucher", "raw_lever"]:
             df[col] = (
                 df[col]
-                .str.replace(r'\s+', ' ', regex=True)
+                .str.replace(r"\s+", " ", regex=True)
                 .str.strip()
                 .str.strip("'")
-                .str.replace(r'^(\d):', r'0\1:', regex=True)
+                .str.replace(r"^(\d):", r"0\1:", regex=True)
             )
 
-        time_pattern = r'(\d{2}:\d{2}\s?[AP]M)'
-        df['only_coucher'] = df['raw_coucher'].str.extract(time_pattern, expand=False).str.strip()
-        df['only_lever'] = df['raw_lever'].str.extract(time_pattern, expand=False).str.strip()
+        tm_pattern = r"(\d{2}:\d{2}\s?[AP]M)"
+        df["only_coucher"] = (
+            df["raw_coucher"].str.extract(tm_pattern, expand=False).str.strip()
+        )
+        df["only_lever"] = (
+            df["raw_lever"].str.extract(tm_pattern, expand=False).str.strip()
+        )
 
-        df['time_coucher'] = df['only_coucher'].apply(parse_time_ts)
-        df['time_lever'] = df['only_lever'].apply(parse_time_ts)
+        # --- 5. Conversion en Timestamp --------------------------------
+        df["time_coucher"] = df["only_coucher"].apply(parse_time_ts)
+        df["time_lever"] = df["only_lever"].apply(parse_time_ts)
 
-        df['coucher'] = df.apply(combine, args=('time_coucher',), axis=1)
-        df['lever'] = df.apply(combine, args=('time_lever',), axis=1)
+        df["coucher"] = df.apply(combine, args=("time_coucher",), axis=1)
+        df["lever"] = df.apply(combine, args=("time_lever",), axis=1)
 
-        mask = df['lever'] <= df['coucher']
-        df.loc[mask, 'lever'] += pd.Timedelta(days=1)
+        mask = df["lever"] <= df["coucher"]
+        df.loc[mask, "lever"] += pd.Timedelta(days=1)
 
-        df['duree'] = (df['lever'] - df['coucher']).dt.total_seconds() / 60
-        comps = (df['lever'] - df['coucher']).dt.components
-        df['heures'] = comps.days * 24 + comps.hours
-        df['minutes'] = comps.minutes
+        # --- 6. Calculs dérivés ----------------------------------------
+        df["duree"] = (df["lever"] - df["coucher"]).dt.total_seconds() / 60
+        comps = (df["lever"] - df["coucher"]).dt.components
+        df["heures"] = comps.days * 24 + comps.hours
+        df["minutes"] = comps.minutes
 
-        df['weekend'] = df['date'].dt.dayofweek >= 5
+        df["weekend"] = df["date"].dt.dayofweek >= 5
 
-        df['coucher_dt'] = df['coucher']
-        df['lever_dt'] = df['lever']
-        df['mins_coucher'] = df['coucher_dt'].dt.hour * 60 + df['coucher_dt'].dt.minute
-        df['mins_lever'] = df['lever_dt'].dt.hour * 60 + df['lever_dt'].dt.minute
+        df["coucher_dt"] = df["coucher"]
+        df["lever_dt"] = df["lever"]
+        df["mins_coucher"] = df["coucher_dt"].dt.hour * 60
+        +df["coucher_dt"].dt.minute
+        df["mins_lever"] = df["lever_dt"].dt.hour * 60
+        +df["lever_dt"].dt.minute
 
+        # --- 7. Validation colonnes ------------------------------------
         missing = set(COLS_REQ_STATS) - set(df.columns)
         if missing:
-            logger.error("Colonnes manquantes après nettoyage : %s", missing)
+            logger.error("[PREPARE] Colonnes manquantes : %s", missing)
             raise KeyError(f"Colonnes manquantes : {missing}")
 
-        logger.info("prepare_sleep_df terminée : %d lignes, %d colonnes", df.shape[0], df.shape[1])
+        logger.info(
+            "[PREPARE] Terminé : %d lignes, %d colonnes",
+            df.shape[0],
+            df.shape[1],
+        )
         return df
+        print(df)
     except KeyError:
         raise
     except Exception:
-        logger.exception("Erreur inattendue dans prepare_sleep_df pour %s", path)
-        return None
-    
-def main() -> None:
+        logger.exception("[PREPARE] Erreur inattendue pour %s", path)
+        logger.critical(
+            f"[PARSE_CSV] Échec : Impossible de lire {path}"
+            + " avec les encodages et séparateurs fournis."
+        )
+
+    return pd.DataFrame()
+
+
+def main():
     """Fonction principale exécutant l'analyse et le rapport de sommeil."""
     args = parse_args()
+    logger.info("[MAIN] Arguments reçus : %s", args)
+
     input_path = Path(args.file)
-    # if not SLEEP_DATA_FILE.exists():
     if not input_path.exists():
-        logger.critical("Fichier introuvable : %s", input_path)
+        logger.critical("[MAIN] Fichier introuvable : %s", input_path)
         raise FileNotFoundError(f"Fichier introuvable : {input_path}")
 
     df = prepare_sleep_df(input_path)
     if df is None:
+        logger.warning("[MAIN] Arrêt : prepare_sleep_df a renvoyé None")
         return
 
     stats_glob = calculer_stats_globales(df)
     stats_periode = calculer_stats_par_periode(df)
     heures_med = calculer_heures_medianes(df)
-
     stats_sommeil = stats_glob + stats_periode + heures_med
 
-    chaine = creer_rapport(
+    rapport_txt = creer_rapport(
         stats_sommeil,
-        df['date'].min().strftime('%A %d %B %Y'),
-        df['date'].max().strftime('%A %d %B %Y')
+        df["date"].min().strftime("%A %d %B %Y"),
+        df["date"].max().strftime("%A %d %B %Y"),
     )
-    
-    print(chaine)
-    
-    df_display = df.copy()
-    df_display['jour'] = df_display['date'].dt.day_name()
-    df_display['duree_h'] = "~" + (df_display['duree'] / 60).round(1).astype(str) + " h"
-    df_display = df_display[["date", "coucher", "lever", "jour", "duree_h", "qualite"]]
-    
-    print(df_display)
-    
-    
+
     if args.viz:
         visualiser_distribution_duree(df)
         visualiser_evolution_duree(df)
         visualiser_coucher_vs_duree(df)
-        
-    if args.format in ["pdf", "both"]:
-        ecrire_rapport_pdf(REPORT_DATA_FILE_PDF, chaine)
-    if args.format in ["txt", "both"]:
-        ecrire_rapport_txt(REPORT_DATA_FILE_TXT, chaine)
 
+    if args.format in ["pdf", "both"]:
+        ecrire_rapport_pdf(REPORT_DATA_FILE_PDF, rapport_txt)
+    if args.format in ["txt", "both"]:
+        ecrire_rapport_txt(REPORT_DATA_FILE_TXT, rapport_txt)
+
+    logger.info("[MAIN] Analyse terminée avec succès")
 
 
 if __name__ == "__main__":
