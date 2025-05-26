@@ -1,72 +1,108 @@
-# DataPulse - Analyseur de Données de Sommeil Personnelles
+DataPulse – Analyseur de Données de Sommeil Personnelles
+DataPulse est un outil Python open-source pour l’analyse et la visualisation de données de sommeil personnelles, conçu à la fois pour l’apprentissage du data engineering, de l’analyse de données, et pour obtenir des insights utiles sur ses propres habitudes de sommeil.
 
-DataPulse est un script Python conçu pour analyser des données personnelles de sommeil exportées (par exemple, depuis une montre connectée ou une application) afin de fournir des statistiques et des visualisations sur les habitudes de sommeil.
+🚀 Objectifs du Projet
+Apprentissage pratique du data engineering, de la qualité logicielle (tests, CI) et de l’analyse de données avec Python et Pandas.
 
-## Objectifs du Projet
+Extraction d’indicateurs-clés à partir de données personnelles issues de montres connectées ou d’applications.
 
-* Apprendre et mettre en pratique les concepts de Data Engineering et d'analyse de données avec Python et Pandas.
-* Extraire des informations utiles à partir de mes propres données de sommeil.
-* Développer un outil simple, modulaire et testé.
+Création d’un outil simple, modulaire, robuste, testé et automatisé.
 
-## Fonctionnalités Actuelles
+⚡ Fonctionnalités Principales
+Lecture intelligente de fichiers CSV multi-encodages/séparateurs.
 
-* Lecture de données de sommeil depuis un fichier CSV (gère différents encodages/séparateurs).
-* Nettoyage et préparation des données (parsing des dates et heures, gestion des valeurs manquantes).
-* Calcul de la durée de sommeil, en gérant correctement les nuits à cheval sur minuit.
-* Calcul de statistiques descriptives :
-    * Durée moyenne, médiane, minimale, maximale, écart-type.
-    * Nombre de nuits totales, normales (7-9h), courtes (<7h), longues (>9h).
-    * Durée moyenne en semaine vs weekend.
-    * Heure médiane de coucher et de lever.
-* Génération d'un rapport textuel en console résumant ces statistiques.
-* Visualisations graphiques (via Matplotlib/Seaborn) :
-    * Distribution de la durée du sommeil (histogramme).
-    * Évolution de la durée du sommeil au fil du temps (graphique linéaire).
-    * Relation entre heure de coucher et durée du sommeil (nuage de points).
-* Logging avancé des opérations (console et fichier rotatif).
-* Tests unitaires (avec pytest) pour les fonctions utilitaires et de calcul.
+Nettoyage avancé des données (dates/heures, valeurs manquantes, parsing robuste).
 
-## Structure du Projet
+Calcul automatique de la durée de sommeil (gestion des nuits à cheval sur minuit).
 
+Statistiques détaillées :
+
+Durée moyenne, médiane, min, max, écart-type
+
+Nombre de nuits totales, normales (7-9h), courtes (<7h), longues (>9h)
+
+Comparaison semaine/weekend
+
+Heures médianes de coucher/lever
+
+Rapport textuel complet (console ou exportable).
+
+Visualisations graphiques :
+
+Histogrammes (distribution)
+
+Séries temporelles (évolution)
+
+Scatterplots (relation coucher/durée, etc.)
+
+Logging détaillé (console et fichier rotatif, niveaux paramétrables)
+
+Tests unitaires (Pytest) avec couverture, CI GitHub Actions
+
+Qualité de code : linting (black, isort, flake8, ruff)
+
+📦 Structure du Projet
+text
+Copier
+Modifier
 DataPulse/
-├── data/                     # Données brutes (ex: Sommeil.csv, Sommeil_Test_Compatible.csv)
-│   └── mon_script.log        # Fichier de log
+├── data/                     # Données brutes (ex: Sommeil.csv, logs…)
 ├── src/                      # Code source Python
-│   └── main.py               # Script principal
-├── tests/                    # Tests unitaires
-│   └── test_main.py
-├── .gitignore                # Fichiers à ignorer par Git
-├── pytest.ini                # Configuration pour pytest
+│   └── main.py
+├── tests/                    # Tests unitaires et d’intégration
+│   └── unit/
+├── .github/
+│   └── workflows/
+│       └── ci.yml            # CI GitHub Actions (lint & tests)
+├── requirements.txt          # Dépendances projet
+├── pyproject.toml            # Config outils (Black, isort, flake8…)
+├── pytest.ini                # Config Pytest
+├── .flake8                   # (optionnel) Config flake8
 └── README.md                 # Ce fichier
+🛠️ Prérequis & Installation
+Python 3.10 ou supérieur recommandé
 
+Dépendances Python :
+Installation rapide :
 
-## Prérequis
+bash
+Copier
+Modifier
+pip install -r requirements.txt
+🕹️ Utilisation
+Cloner le dépôt GitHub
 
-* Python 3.x
-* Librairies Python (à installer via `pip install -r requirements.txt` - *on créera ce fichier ensuite*) :
-    * pandas
-    * python-dateutil
-    * matplotlib
-    * seaborn
-    * pytest (pour les tests)
+Installer les dépendances
 
-## Utilisation
+Placer vos fichiers de sommeil CSV dans le dossier data/
 
-1.  Cloner le dépôt (si sur GitHub).
-2.  S'assurer que les prérequis sont installés.
-3.  Placer le fichier de données de sommeil (nommé `Sommeil.csv` ou `Sommeil_Test_Compatible.csv`) dans le dossier `data/`.
-4.  Exécuter le script depuis la racine du projet :
-    ```bash
-    python src/main.py
-    ```
-5.  Les rapports textuels s'afficheront dans la console, les graphiques s'ouvriront dans des fenêtres séparées, et les logs détaillés seront dans `data/mon_script.log`.
+Exécuter le script principal :
 
-## Prochaines Étapes Envisagées
+bash
+Copier
+Modifier
+python src/main.py
+Consulter le rapport dans la console, les graphiques à l’écran, et les logs détaillés dans data/mon_script.log
 
-Améliorer les visualisations (plus d'options, interactivité ?).
-Ajouter une interface en ligne de commande (CLI) avec `argparse` pour plus de flexibilité (choix du fichier d'entrée, etc.).
-Exporter le rapport dans un fichier (HTML, PDF ?).
+🔁 Intégration Continue (CI)
+Chaque commit/pull request déclenche automatiquement :
 
----
+Vérification du formatage (black, isort)
 
-*Ce projet est développé dans un but d'apprentissage personnel.*
+Linting (flake8, ruff)
+
+Exécution des tests unitaires avec couverture (badge à venir)
+
+Le fichier ci.yml est disponible dans .github/workflows/.
+
+🧑‍🔬 Prochaines Étapes
+Amélioration des visualisations (options, interactivité, export)
+
+Interface CLI avancée (argparse)
+
+Export rapport en PDF ou HTML
+
+Optimisation de la couverture de tests
+
+✨ Remerciements
+Projet développé pour l’apprentissage personnel de la data, la qualité logicielle et l’analyse exploratoire.
