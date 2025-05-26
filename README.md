@@ -23,6 +23,8 @@
     - Comparaison semaine/weekend
     - Heures médianes de coucher/lever
 - **Rapport textuel complet** (console ou exportable).
+- **Interface en ligne de commande avancée** (CLI : `argparse`) :  
+    Choix du fichier à analyser, format de rapport (`txt`, `pdf`, ou les deux), génération optionnelle des visualisations, etc.
 - **Visualisations graphiques :**
     - Histogrammes (distribution)
     - Séries temporelles (évolution)
