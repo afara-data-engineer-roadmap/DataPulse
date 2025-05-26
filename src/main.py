@@ -614,7 +614,9 @@ def controle_validite(row: pd.Series) -> str:
 
     if row.get("Durée", "--") == "--" or pd.isna(row.get("Durée")):
         erreurs.append("Durée manquante")
-    if row.get("Heure de coucher", "--") == "--" or pd.isna(row.get("Heure de coucher")):
+    if row.get("Heure de coucher", "--") == "--" or pd.isna(
+        row.get("Heure de coucher")
+    ):
         erreurs.append("Heure de coucher manquante")
     if row.get("Heure de lever", "--") == "--" or pd.isna(row.get("Heure de lever")):
         erreurs.append("Heure de lever manquante")
@@ -625,7 +627,6 @@ def controle_validite(row: pd.Series) -> str:
         return message
     else:
         return "valide"
-
 
 
 def lire_fichier_pandas(

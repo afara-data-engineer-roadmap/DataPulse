@@ -390,12 +390,11 @@ def test_calcul_duree_composantes():
     df_obtenu["coucher_dt"] = df_obtenu["coucher"]
     df_obtenu["lever_dt"] = df_obtenu["lever"]
     df_obtenu["mins_coucher"] = (
-    df_obtenu["coucher_dt"].dt.hour * 60 + df_obtenu["coucher_dt"].dt.minute
+        df_obtenu["coucher_dt"].dt.hour * 60 + df_obtenu["coucher_dt"].dt.minute
     )
     df_obtenu["mins_lever"] = (
-    df_obtenu["lever_dt"].dt.hour * 60 + df_obtenu["lever_dt"].dt.minute
+        df_obtenu["lever_dt"].dt.hour * 60 + df_obtenu["lever_dt"].dt.minute
     )
-
 
     # 3. ARRANGE: Définis le DataFrame EXACT que tu attends en sortie
     data_attendu = {
