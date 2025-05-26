@@ -57,12 +57,12 @@ Python 3.10 ou supérieur recommandé
 Installation rapide des dépendances :
 
 ```bash
-Copier
-Modifier
 pip install -r requirements.txt
+```
+
 🕹️ Utilisation
 Cloner le dépôt GitHub
-```
+
 Installer les dépendances
 
 Placer vos fichiers de sommeil CSV dans le dossier data/
@@ -70,8 +70,6 @@ Placer vos fichiers de sommeil CSV dans le dossier data/
 Exécuter le script principal :
 
 ```bash
-Copier
-Modifier
 python src/main.py
 ```
 Consulter le rapport dans la console, les graphiques à l’écran, et les logs détaillés dans data/mon_script.log
@@ -89,8 +87,6 @@ Le fichier ci.yml est disponible dans .github/workflows/.
 
 🧑‍🔬 Prochaines Étapes
 Amélioration des visualisations (options, interactivité, export)
-
-Interface CLI avancée (argparse)
 
 Export rapport en PDF ou HTML
 
