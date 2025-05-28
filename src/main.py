@@ -82,6 +82,131 @@ configure_logging(DATA_DIR / "mon_script.log")
 logger = logging.getLogger(__name__)
 
 
+def nettoyer_dates(colonne):
+    """Convertit une colonne en datetime, et journalise les NaT éventuels."""
+    resultat = pd.to_datetime(colonne, errors="coerce")
+    if resultat.isna().any():
+        logger.warning(
+            "[PREPARE] Certaines dates non parsées (indices : %s)",
+            resultat[resultat.isna()].index.tolist(),
+        )
+    if resultat.isna().all():
+        logger.error("[PREPARE] Toutes les dates sont NaT")
+    return resultat
+
+
+def nettoyer_heures_brutes(colonne):
+    """Nettoie une colonne d'heures (str) et standardise le format."""
+    return (
+        colonne.astype(str)
+        .replace("--", pd.NA)
+        .str.replace(r"\s+", " ", regex=True)
+        .str.strip()
+        .str.strip("'")
+        .str.replace(r"^(\d):", r"0\1:", regex=True)
+    )
+
+
+def extraire_heures(colonne):
+    """Extrait l'heure au format 12h ou 24h depuis une série de chaînes."""
+    motifs_heures = [
+        r"(\d{2}:\d{2}\s?[APap][Mm])",  # 12h ex : 10:20 PM
+        r"(\d{2}:\d{2})",  # 24h ex : 22:30
+    ]
+    for motif in motifs_heures:
+        extrait = colonne.str.extract(motif, expand=False).str.strip()
+        if extrait.notna().any():
+            return extrait
+    return pd.Series([pd.NA] * len(colonne), index=colonne.index)
+
+
+def convertir_heure(colonne):
+    """Convertit une série d'heures en objets temps (avec parse_time_ts)."""
+    return colonne.apply(parse_time_ts)
+
+
+def corriger_lever_vs_coucher(df):
+    """Corrige cas où l'hr de lever est < ou = à l'hr de coucher (passage mnt)."""
+    masque = df["lever"] <= df["coucher"]
+    n_correction = masque.sum()
+    df.loc[masque, "lever"] += pd.Timedelta(days=1)
+    if n_correction > 0:
+        logger.info(
+            "[PREPARE] Correction lever <= coucher : %d lignes ajustées", n_correction
+        )
+    return df
+
+
+def ajouter_colonnes_derivees(df):
+    """Ajoute les colonnes de durée, heures, minutes, we et autres dérivées."""
+    df["duree"] = (df["lever"] - df["coucher"]).dt.total_seconds() / 60
+    composants = (df["lever"] - df["coucher"]).dt.components
+    df["heures"] = composants.days * 24 + composants.hours
+    df["minutes"] = composants.minutes
+    df["weekend"] = df["date"].dt.dayofweek >= 5
+    df["coucher_dt"] = df["coucher"]
+    df["lever_dt"] = df["lever"]
+    df["mins_coucher"] = df["coucher_dt"].dt.hour * 60 + df["coucher_dt"].dt.minute
+    df["mins_lever"] = df["lever_dt"].dt.hour * 60 + df["lever_dt"].dt.minute
+    return df
+
+
+def valider_colonnes(df, colonnes_requises):
+    """Vérifie la présence des colonnes obligatoires."""
+    manquantes = set(colonnes_requises) - set(df.columns)
+    if manquantes:
+        logger.error("[PREPARE] Colonnes manquantes : %s", manquantes)
+        raise KeyError(f"Colonnes manquantes : {manquantes}")
+
+
+def lire_et_normaliser_csv(path):
+    """
+    Lit un fichier CSV multi-encodages/séparateurs et norm. les noms de colonnes.
+
+    - Lit le fichier (gestion mémoire/Path, multi-encodage/séparateurs)
+    - Remplace les caractères spéciaux dans les colonnes
+    - Renomme les colonnes attendues (mapping)
+    - Supprime les colonnes non utilisées si besoin
+
+    Returns
+    -------
+    pd.DataFrame ou None
+    """
+    logger.info("[NORM] Lecture et normalisation du CSV : %s", path)
+    # Utilise ta fonction existante lire_fichier_pandas
+    if hasattr(path, "read"):
+        path.seek(0)
+        resultat = lire_fichier_pandas(path)
+    else:
+        resultat = lire_fichier_pandas(str(path))
+    if not resultat or "dataframe" not in resultat:
+        logger.critical("[NORM] Échec lecture CSV %s", path)
+        return None
+
+    df = resultat["dataframe"]
+    # Remplacement d’esp. insécables par espaces standards (fréquent sur export)
+    df.columns = df.columns.str.replace("\u00a0", " ", regex=False)
+    df["qualite"] = df.apply(controle_validite, axis=1).fillna(pd.NA)
+    # Mapping des noms pour harmoniser avec le reste du code
+    mapping = {
+        "Sommeil 4 semaines": "date",
+        "Heure de coucher": "coucher",
+        "Heure de lever": "lever",
+        # Ajoute ici tout autre mapping de colonne si besoin
+    }
+    df = df.rename(columns=mapping)
+
+    # Suppression de colonnes parasites, par exemple :
+    df = df.drop(columns=["Durée"], errors="ignore")
+
+    logger.debug(
+        "[NORM] Après normalisation : shape=%s, colonnes=%s",
+        df.shape,
+        df.columns.tolist(),
+    )
+    return df
+
+
 def parse_args():
     """
     Analyse et retourne les arguments de la ligne de commande.
@@ -443,10 +568,10 @@ def visualiser_coucher_vs_duree(
     # Personnalisation des axes et du titre
     ax.set(
         title="Durée du sommeil en fonction de l'heure de coucher",
-        xlabel="Heure de coucher (minutes depuis minuit)",
-        ylabel="Durée du sommeil (minutes)",
-        grid=True,  # Ajout d'une grille
     )
+    ax.xlabel = "Heure de coucher (minutes depuis minuit)"
+    ax.ylabel = "Durée du sommeil (minutes)"
+    ax.grid = True  # active d'une grille
 
     plt.tight_layout()  # Ajuste auto. les élémts pr éviter les superpositions
 
@@ -495,7 +620,7 @@ def visualiser_evolution_duree(
     """
     # Vérifier et nettoyer les données nécessaires
     data = df[["date", "duree"]].dropna()
-    data = data.datasort_values(by="date")
+    data = data.sort_values(by="date")
     data = data.reset_index(drop=True)
 
     if data.empty:
@@ -532,17 +657,17 @@ def visualiser_evolution_duree(
     )
 
     # Personnalisation de l'axe et du titre
-    ax.set(
-        title="Évolution de la durée de sommeil",
-        xlabel="Date",
-        ylabel="Durée (minutes)",
-        grid=True,
-        linestyle="--",
-        alpha=0.6,
-    )
+    ax.set(title="Évolution de la durée de sommeil")
+    ax.xlabel = "Date"
+    ax.ylabel = "Durée (minutes)"
+    ax.grid(True)  # active la grille
+    # Le style de la grille, l'alpha, etc., doivent se faire ainsi :
+    ax.grid(True, linestyle="--", alpha=0.6)
     ax.legend()  # Afficher la légende pour distinguer les deux lignes
 
-    plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
+    ax.get_xticklabels()
+    ax.rotation = 45
+    ax.ha = "right"
     plt.tight_layout()
 
     # Affichage
@@ -582,15 +707,17 @@ def visualiser_distribution_duree(df: pd.DataFrame):
         logger.info("Aucune donnée valide pour générer la visualisation.")
         return
     # Personnalisation
-    plt.figure(figsize=(12, 8))
-    sns.histplot(data, kde=True, bins=10, color="skyblue", edgecolor="black")
 
-    plt.set(
+    plt.figure(figsize=(12, 8))
+    ax = sns.histplot(data, kde=True, bins=10, color="skyblue", edgecolor="black")
+
+    ax.set(
         title="Distribution de la durée du sommeil",
         xlabel="Durée du sommeil (minutes)",
         ylabel="Fréquence (nombre de nuits)",
-        grid=True,
     )
+    ax.grid(True)
+    plt.tight_layout()
     # Pas de légende nécessaire ici car une seule distribution est tracée
 
     # sauvegarde
@@ -938,120 +1065,52 @@ def creer_rapport(stats_sommeil: tuple, date_min, date_max):
 
 
 def prepare_sleep_df(path: str | Path):
-    """Charge et prépare un DataFrame de sommeil depuis un CSV."""
+    """Pipeline modulaire pour préparer le DataFrame de sommeil."""
     try:
-        logger.info("[PREPARE] Début pour %s", path)
+        logger.info("[PREPARE] Début pour %s", str(path))
+        df = lire_et_normaliser_csv(path)
 
-        # --- 1. Lecture -------------------------------------------------
-        if hasattr(path, "read"):  # cas Streamlit / fichier en mémoire
-            path.seek(0)
-            resultat = lire_fichier_pandas(path)
-        else:
-            resultat = lire_fichier_pandas(str(path))
+        # Nettoyage et conversion des dates
+        df["date"] = nettoyer_dates(df["date"])
 
-        if resultat is None:
-            logger.critical("[PREPARE] Abandon : échec de lecture %s", path)
-            return pd.DataFrame()
+        # Nettoyage des heures brutes (colonnes 'coucher' et 'lever')
+        df["raw_coucher"] = nettoyer_heures_brutes(df["coucher"])
+        df["raw_lever"] = nettoyer_heures_brutes(df["lever"])
 
-        df = resultat["dataframe"]
-        df.columns = df.columns.str.replace("\u00a0", " ", regex=False)
-        df["qualite"] = df.apply(controle_validite, axis=1).fillna(pd.NA)
+        # Extraction des heures (12h ou 24h)
+        df["only_coucher"] = extraire_heures(df["raw_coucher"])
+        df["only_lever"] = extraire_heures(df["raw_lever"])
 
-        logger.debug(
-            "[PREPARE] Avant drop/rename : shape=%s, cols=%s",
-            df.shape,
-            df.columns.tolist(),
-        )
+        # Conversion en Timestamp (heure seule)
+        df["time_coucher"] = convertir_heure(df["only_coucher"])
+        df["time_lever"] = convertir_heure(df["only_lever"])
 
-        # --- 2. Normalisation colonnes ---------------------------------
-        df = df.drop(columns=["Durée"], errors="ignore").rename(
-            columns={
-                "Sommeil 4 semaines": "date",
-                "Heure de coucher": "coucher",
-                "Heure de lever": "lever",
-            }
-        )
-        logger.debug(
-            "[PREPARE] Après drop/rename  : shape=%s, cols=%s",
-            df.shape,
-            df.columns.tolist(),
-        )
-
-        # --- 3. Nettoyage dates ----------------------------------------
-        df["date"] = pd.to_datetime(df["date"], errors="coerce")
-        if df["date"].isna().any():
-            logger.warning("[PREPARE] Certaines dates non parsées")
-        if df["date"].isna().all():
-            logger.warning("[PREPARE] Toutes les dates NaT pour %s", path)
-
-        # --- 4. Nettoyage heures brutes --------------------------------
-        df["raw_coucher"] = df["coucher"].astype(str).replace("--", pd.NA)
-        df["raw_lever"] = df["lever"].astype(str).replace("--", pd.NA)
-
-        for col in ["raw_coucher", "raw_lever"]:
-            df[col] = (
-                df[col]
-                .str.replace(r"\s+", " ", regex=True)
-                .str.strip()
-                .str.strip("'")
-                .str.replace(r"^(\d):", r"0\1:", regex=True)
-            )
-
-        tm_pattern = r"(\d{2}:\d{2}\s?[AP]M)"
-        df["only_coucher"] = (
-            df["raw_coucher"].str.extract(tm_pattern, expand=False).str.strip()
-        )
-        df["only_lever"] = (
-            df["raw_lever"].str.extract(tm_pattern, expand=False).str.strip()
-        )
-
-        # --- 5. Conversion en Timestamp --------------------------------
-        df["time_coucher"] = df["only_coucher"].apply(parse_time_ts)
-        df["time_lever"] = df["only_lever"].apply(parse_time_ts)
-
+        # Combine la date et l'heure pour obtenir un Timestamp complet
         df["coucher"] = df.apply(combine, args=("time_coucher",), axis=1)
         df["lever"] = df.apply(combine, args=("time_lever",), axis=1)
 
-        mask = df["lever"] <= df["coucher"]
-        df.loc[mask, "lever"] += pd.Timedelta(days=1)
+        # Correction lever <= coucher
+        df = corriger_lever_vs_coucher(df)
 
-        # --- 6. Calculs dérivés ----------------------------------------
-        df["duree"] = (df["lever"] - df["coucher"]).dt.total_seconds() / 60
-        comps = (df["lever"] - df["coucher"]).dt.components
-        df["heures"] = comps.days * 24 + comps.hours
-        df["minutes"] = comps.minutes
+        # Calculs dérivés
+        df = ajouter_colonnes_derivees(df)
 
-        df["weekend"] = df["date"].dt.dayofweek >= 5
-
-        df["coucher_dt"] = df["coucher"]
-        df["lever_dt"] = df["lever"]
-        df["mins_coucher"] = df["coucher_dt"].dt.hour * 60
-        +df["coucher_dt"].dt.minute
-        df["mins_lever"] = df["lever_dt"].dt.hour * 60
-        +df["lever_dt"].dt.minute
-
-        # --- 7. Validation colonnes ------------------------------------
-        missing = set(COLS_REQ_STATS) - set(df.columns)
-        if missing:
-            logger.error("[PREPARE] Colonnes manquantes : %s", missing)
-            raise KeyError(f"Colonnes manquantes : {missing}")
+        # Validation des colonnes requises
+        valider_colonnes(df, COLS_REQ_STATS)
 
         logger.info(
-            "[PREPARE] Terminé : %d lignes, %d colonnes",
-            df.shape[0],
-            df.shape[1],
+            "[PREPARE] Terminé : %d lignes, %d colonnes", df.shape[0], df.shape[1]
         )
         return df
-        print(df)
+
     except KeyError:
         raise
     except Exception:
         logger.exception("[PREPARE] Erreur inattendue pour %s", path)
         logger.critical(
-            f"[PARSE_CSV] Échec : Impossible de lire {path}"
-            + " avec les encodages et séparateurs fournis."
+            f"[PARSE_CSV] Échec : Impossible de lire {path} "
+            "avec les encodages et séparateurs fournis."
         )
-
     return pd.DataFrame()
 
 
