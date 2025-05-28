@@ -13,6 +13,13 @@ from main import (
     mins_to_hhmm,
     parse_time_ts,
     prepare_sleep_df,
+    extraire_heures,
+    nettoyer_heures_brutes,
+    nettoyer_dates,
+    convertir_heure,
+    corriger_lever_vs_coucher,
+    valider_colonnes,
+    ajouter_colonnes_derivees
 )
 
 
@@ -428,3 +435,197 @@ def test_calcul_duree_composantes():
 
     # 4. ASSERT: Compare les deux DataFrames
     pd_testing.assert_frame_equal(df_obtenu, df_attendu, check_dtype=False)
+
+
+def test_nettoyer_dates_basique():
+    """
+    Teste la fonction nettoyer_dates sur des dates valides et invalides
+    rencontrées dans tes fichiers CSV réels.
+    """
+    serie = pd.Series(['2025-05-26', 'not a date', None, '--'])
+    result = nettoyer_dates(serie)
+    assert pd.notna(result[0])    # Date ISO
+    assert pd.isna(result[1])     # Invalide
+    assert pd.isna(result[2])     # None
+    assert pd.isna(result[3])     # --
+
+
+def test_nettoyer_heures_brutes():
+    """
+    Teste la fonction nettoyer_heures_brutes sur des heures avec espaces, '--', apostrophes.
+    - Doit normaliser les heures valides.
+    - Doit convertir '--' en NA.
+    """
+    serie = pd.Series([' 22:10 ', '--', "7:05", "'23:01'", " 10:20 PM "])
+    result = nettoyer_heures_brutes(serie)
+    assert result[0] == "22:10"     # Retrait espaces
+    assert pd.isna(result[1])       # '--' => NA
+    assert result[2] == "07:05"     # Ajout zéro devant
+    assert result[3] == "23:01"     # Retrait apostrophes
+    assert result[4] == "10:20 PM"  # Espace et majuscule conservés
+
+
+def test_extraire_heures_nettoyees():
+    """
+    Teste extraire_heures sur les valeurs d'heures déjà nettoyées.
+    Après nettoyage, seuls 'HH:MM AM/PM' ou NA sont possibles.
+    """
+    serie = pd.Series([
+        "10:29 PM",    # Format AM/PM valide
+        "08:28 AM",    # Format AM/PM valide
+        pd.NA,         # Valeur manquante après nettoyage
+        "12:22 AM",    # Format AM/PM valide
+        "11:43 PM",    # Format AM/PM valide
+    ])
+    result = extraire_heures(serie)
+    assert result[0] == "10:29 PM"
+    assert result[1] == "08:28 AM"
+    assert pd.isna(result[2])
+    assert result[3] == "12:22 AM"
+    assert result[4] == "11:43 PM"
+
+def test_convertir_heure_am_pm():
+    """
+    Vérifie que convertir_heure transforme des chaînes AM/PM en objets time.
+    """
+    serie = pd.Series(["10:29 PM", "8:28 AM", "12:00 PM", "12:00 AM"])
+    result = convertir_heure(serie)
+    assert result[0] == time(22, 29)
+    assert result[1] == time(8, 28)
+    assert result[2] == time(12, 0)
+    assert result[3] == time(0, 0)
+
+def test_convertir_heure_na_et_invalide():
+    """
+    Vérifie que convertir_heure gère les valeurs manquantes ou invalides.
+    """
+    serie = pd.Series([pd.NA, "--", None, "", "bidule"])
+    result = convertir_heure(serie)
+    assert pd.isna(result[0])
+    assert pd.isna(result[1])
+    assert pd.isna(result[2])
+    assert pd.isna(result[3])
+    assert pd.isna(result[4])
+
+def test_convertir_heure_melange_valeurs():
+    """
+    Teste un mélange de valeurs valides et invalides.
+    """
+    serie = pd.Series(["11:45 PM", "bidule", "1:00 AM", pd.NA])
+    result = convertir_heure(serie)
+    assert result[0] == time(23, 45)
+    assert pd.isna(result[1])
+    assert result[2] == time(1, 0)
+    assert pd.isna(result[3])
+    
+def test_corriger_lever_vs_coucher_ajustement():
+    """
+    Vérifie que les lignes où 'lever' <= 'coucher' sont bien corrigées (+1 jour sur 'lever').
+    """
+    df = pd.DataFrame({
+        "coucher": [pd.Timestamp("2024-05-28 23:00:00"), pd.Timestamp("2024-05-29 23:30:00")],
+        "lever":   [pd.Timestamp("2024-05-28 06:30:00"), pd.Timestamp("2024-05-30 07:00:00")],
+    })
+    df_corrige = corriger_lever_vs_coucher(df.copy())
+    # 1ʳᵉ ligne doit être corrigée (lever < coucher)
+    assert df_corrige.loc[0, "lever"] == pd.Timestamp("2024-05-29 06:30:00")
+    # 2ᵉ ligne ne change pas (lever > coucher)
+    assert df_corrige.loc[1, "lever"] == pd.Timestamp("2024-05-30 07:00:00")
+
+def test_corriger_lever_vs_coucher_aucune_correction():
+    """
+    Vérifie que s'il n'y a rien à corriger, la DataFrame reste inchangée.
+    """
+    df = pd.DataFrame({
+        "coucher": [pd.Timestamp("2024-05-28 22:00:00"), pd.Timestamp("2024-05-28 23:00:00")],
+        "lever":   [pd.Timestamp("2024-05-29 06:00:00"), pd.Timestamp("2024-05-29 07:30:00")],
+    })
+    df_corrige = corriger_lever_vs_coucher(df.copy())
+    pd.testing.assert_frame_equal(df, df_corrige)
+
+def test_corriger_lever_vs_coucher_egalite():
+    """
+    Vérifie que si 'lever' == 'coucher', la correction s'applique aussi.
+    """
+    df = pd.DataFrame({
+        "coucher": [pd.Timestamp("2024-05-28 22:00:00")],
+        "lever":   [pd.Timestamp("2024-05-28 22:00:00")],
+    })
+    df_corrige = corriger_lever_vs_coucher(df.copy())
+    assert df_corrige.loc[0, "lever"] == pd.Timestamp("2024-05-29 22:00:00")
+
+def test_ajouter_colonnes_derivees_valeurs_attendues():
+    """
+    Vérifie que les colonnes dérivées (duree, heures, minutes, weekend, etc.)
+    sont correctement ajoutées et calculées.
+    """
+    df = pd.DataFrame({
+        "date": [pd.Timestamp("2024-05-28"), pd.Timestamp("2024-05-25")],  # Mardi, Samedi
+        "coucher": [pd.Timestamp("2024-05-28 22:00:00"), pd.Timestamp("2024-05-25 23:30:00")],
+        "lever": [pd.Timestamp("2024-05-29 06:30:00"), pd.Timestamp("2024-05-26 07:00:00")],
+    })
+    df_derive = ajouter_colonnes_derivees(df.copy())
+    # Durée en minutes
+    assert df_derive.loc[0, "duree"] == 510  # 8h30 = 510 min
+    assert df_derive.loc[1, "duree"] == 450  # 7h30 = 450 min
+    # Heures et minutes
+    assert df_derive.loc[0, "heures"] == 8
+    assert df_derive.loc[0, "minutes"] == 30
+    assert df_derive.loc[1, "heures"] == 7
+    assert df_derive.loc[1, "minutes"] == 30
+    # Weekend flag (Samedi = True)
+    assert not df_derive.loc[0, "weekend"]  # Mardi
+    assert df_derive.loc[1, "weekend"]      # Samedi
+    # Vérifie coucher_dt et lever_dt
+    assert df_derive.loc[0, "coucher_dt"] == pd.Timestamp("2024-05-28 22:00:00")
+    assert df_derive.loc[0, "lever_dt"] == pd.Timestamp("2024-05-29 06:30:00")
+    # Minutes depuis minuit
+    assert df_derive.loc[0, "mins_coucher"] == 22 * 60
+    assert df_derive.loc[0, "mins_lever"] == 6 * 60 + 30
+
+def test_valider_colonnes_ok():
+    """
+    Vérifie que valider_colonnes ne lève pas d'erreur si tout est présent.
+    """
+    df = pd.DataFrame({"a": [1], "b": [2], "c": [3]})
+    try:
+        valider_colonnes(df, ["a", "b"])
+    except KeyError:
+        assert False, "KeyError ne doit pas être levé si tout est ok"
+
+def test_valider_colonnes_erreur():
+    """
+    Vérifie que valider_colonnes lève une erreur si une colonne manque.
+    """
+    df = pd.DataFrame({"a": [1], "b": [2]})
+    try:
+        valider_colonnes(df, ["a", "b", "c"])
+    except KeyError as e:
+        assert "Colonnes manquantes" in str(e)
+    else:
+        assert False, "KeyError doit être levé si une colonne manque"
+
+def test_lire_et_normaliser_csv_valide_et_invalide(tmp_path):
+    contenu = (
+        "Sommeil 4 semaines,Durée,Heure de coucher,Heure de lever\n"
+        "2025-05-26,9h 43min.,10:29 PM,8:28 AM\n"
+        "2025-05-12,--,--,--\n"
+    )
+    fichier = tmp_path / "sommeil.csv"
+    fichier.write_text(contenu, encoding="utf-8")
+
+    # Mock lire_fichier_pandas pour retourner DataFrame attendu
+    import main
+    def mock_lire_fichier_pandas(path):
+        return {"dataframe": pd.read_csv(path)}
+    original = main.lire_fichier_pandas
+    main.lire_fichier_pandas = mock_lire_fichier_pandas
+
+    try:
+        df = main.lire_et_normaliser_csv(fichier)
+    finally:
+        main.lire_fichier_pandas = original
+
+    assert df.loc[0, "qualite"] == "valide"
+    assert df.loc[1, "qualite"] == "Durée manquante; Heure de coucher manquante; Heure de lever manquante"
+
